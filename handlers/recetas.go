@@ -13,8 +13,8 @@ import (
 // CrearReceta crea una nueva receta médica
 func CrearReceta(c *fiber.Ctx) error {
 	// Solo médicos pueden crear recetas
-	userType := c.Locals("user_type").(string)
-	if userType != "medico" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "medico" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden crear recetas",
 		})
@@ -36,17 +36,19 @@ func CrearReceta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Verificar que el paciente existe
-	var pacienteTipo string
+	// Verificar que el paciente existe y tiene rol de paciente
+	var rolNombre string
 	err := database.GetDB().QueryRow(context.Background(),
-		"SELECT tipo FROM Usuario WHERE id_usuario = $1", receta.IDPaciente).Scan(&pacienteTipo)
+		`SELECT r.nombre FROM Usuario u 
+		 JOIN Rol r ON u.id_rol = r.id_rol 
+		 WHERE u.id_usuario = $1`, receta.IDPaciente).Scan(&rolNombre)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{
 			"error": "Paciente no encontrado",
 		})
 	}
 
-	if pacienteTipo != "paciente" {
+	if rolNombre != "paciente" {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "El usuario especificado no es un paciente",
 		})
@@ -90,13 +92,13 @@ func CrearReceta(c *fiber.Ctx) error {
 
 // ObtenerRecetas obtiene todas las recetas (con filtros según el rol)
 func ObtenerRecetas(c *fiber.Ctx) error {
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	var query string
 	var args []interface{}
 
-	switch userType {
+	switch userRole {
 	case "admin":
 		// Admin puede ver todas las recetas
 		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
@@ -153,8 +155,8 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 
 	type RecetaDetalle struct {
 		models.Receta
-		MedicoNombre     string `json:"medico_nombre"`
-		PacienteNombre   string `json:"paciente_nombre"`
+		MedicoNombre      string `json:"medico_nombre"`
+		PacienteNombre    string `json:"paciente_nombre"`
 		ConsultorioNombre string `json:"consultorio_nombre"`
 	}
 
@@ -188,7 +190,7 @@ func ObtenerRecetaPorID(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Construir query según el rol
@@ -204,7 +206,7 @@ func ObtenerRecetaPorID(c *fiber.Ctx) error {
 	args = append(args, id)
 
 	// Agregar filtros según el rol
-	switch userType {
+	switch userRole {
 	case "medico":
 		query += " AND r.id_medico = $2"
 		args = append(args, userID)
@@ -221,8 +223,8 @@ func ObtenerRecetaPorID(c *fiber.Ctx) error {
 
 	type RecetaDetalle struct {
 		models.Receta
-		MedicoNombre     string `json:"medico_nombre"`
-		PacienteNombre   string `json:"paciente_nombre"`
+		MedicoNombre      string `json:"medico_nombre"`
+		PacienteNombre    string `json:"paciente_nombre"`
 		ConsultorioNombre string `json:"consultorio_nombre"`
 	}
 
@@ -247,8 +249,8 @@ func ObtenerRecetaPorID(c *fiber.Ctx) error {
 // ActualizarReceta actualiza una receta existente
 func ActualizarReceta(c *fiber.Ctx) error {
 	// Solo médicos pueden actualizar recetas
-	userType := c.Locals("user_type").(string)
-	if userType != "medico" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "medico" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden actualizar recetas",
 		})
@@ -310,8 +312,8 @@ func ActualizarReceta(c *fiber.Ctx) error {
 // EliminarReceta elimina una receta
 func EliminarReceta(c *fiber.Ctx) error {
 	// Solo médicos y admin pueden eliminar recetas
-	userType := c.Locals("user_type").(string)
-	if userType != "medico" && userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "medico" && userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos y administradores pueden eliminar recetas",
 		})
@@ -331,7 +333,7 @@ func EliminarReceta(c *fiber.Ctx) error {
 	var query string
 	var args []interface{}
 
-	if userType == "admin" {
+	if userRole == "admin" {
 		// Admin puede eliminar cualquier receta
 		query = "DELETE FROM Receta WHERE id_receta = $1"
 		args = append(args, id)
@@ -361,7 +363,7 @@ func EliminarReceta(c *fiber.Ctx) error {
 
 // ObtenerRecetasPorPaciente obtiene todas las recetas de un paciente específico
 func ObtenerRecetasPorPaciente(c *fiber.Ctx) error {
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	pacienteIDParam := c.Params("paciente_id")
@@ -373,7 +375,7 @@ func ObtenerRecetasPorPaciente(c *fiber.Ctx) error {
 	}
 
 	// Verificar permisos
-	switch userType {
+	switch userRole {
 	case "paciente":
 		// Paciente solo puede ver sus propias recetas
 		if userID != pacienteID {
@@ -408,8 +410,8 @@ func ObtenerRecetasPorPaciente(c *fiber.Ctx) error {
 
 	type RecetaDetalle struct {
 		models.Receta
-		MedicoNombre     string `json:"medico_nombre"`
-		PacienteNombre   string `json:"paciente_nombre"`
+		MedicoNombre      string `json:"medico_nombre"`
+		PacienteNombre    string `json:"paciente_nombre"`
 		ConsultorioNombre string `json:"consultorio_nombre"`
 	}
 
@@ -428,8 +430,8 @@ func ObtenerRecetasPorPaciente(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"recetas": recetas,
-		"total":   len(recetas),
+		"recetas":     recetas,
+		"total":       len(recetas),
 		"paciente_id": pacienteID,
 	})
 }

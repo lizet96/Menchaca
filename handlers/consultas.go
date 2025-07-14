@@ -19,16 +19,16 @@ func CrearConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Verificar permisos: solo médicos y admin pueden crear consultas
-	userType := c.Locals("user_type").(string)
-	if userType != "medico" && userType != "admin" {
+	// Verificar permisos usando el nuevo sistema de roles
+	userRole := c.Locals("user_role").(string)
+	if userRole != "medico" && userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden crear consultas",
 		})
 	}
 
 	// Si es médico, debe ser el mismo que está en la consulta
-	if userType == "medico" {
+	if userRole == "medico" {
 		userID := c.Locals("user_id").(int)
 		if consulta.IDMedico != userID {
 			return c.Status(403).JSON(fiber.Map{
@@ -47,12 +47,12 @@ func CrearConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Insertar consulta
+	// Insertar consulta (sin campo tipo)
 	var nuevoID int
 	err = database.GetDB().QueryRow(context.Background(),
-		`INSERT INTO Consulta (tipo, diagnostico, costo, id_paciente, id_medico, id_horario, fecha, estado, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_consulta`,
-		consulta.Tipo, consulta.Diagnostico, consulta.Costo, consulta.IDPaciente, consulta.IDMedico,
+		`INSERT INTO Consulta (diagnostico, costo, id_paciente, id_medico, id_horario, fecha, estado, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id_consulta`,
+		consulta.Diagnostico, consulta.Costo, consulta.IDPaciente, consulta.IDMedico,
 		consulta.IDHorario, time.Now(), "programada", time.Now(), time.Now()).Scan(&nuevoID)
 
 	if err != nil {
@@ -74,18 +74,18 @@ func CrearConsulta(c *fiber.Ctx) error {
 	})
 }
 
-// ObtenerConsultas obtiene las consultas según el tipo de usuario
+// ObtenerConsultas obtiene las consultas según el rol de usuario
 func ObtenerConsultas(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 
 	var query string
 	var args []interface{}
 
-	switch userType {
+	switch userRole {
 	case "admin":
 		// Admin puede ver todas las consultas
-		query = `SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico, 
+		query = `SELECT c.id_consulta, c.diagnostico, c.costo, c.id_paciente, c.id_medico, 
 				 c.id_horario, c.fecha, c.estado, c.created_at,
 				 p.nombre as paciente_nombre, m.nombre as medico_nombre
 				 FROM Consulta c
@@ -94,7 +94,7 @@ func ObtenerConsultas(c *fiber.Ctx) error {
 				 ORDER BY c.fecha DESC`
 	case "medico":
 		// Médico solo ve sus consultas
-		query = `SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
+		query = `SELECT c.id_consulta, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
 				 c.id_horario, c.fecha, c.estado, c.created_at,
 				 p.nombre as paciente_nombre, m.nombre as medico_nombre
 				 FROM Consulta c
@@ -105,7 +105,7 @@ func ObtenerConsultas(c *fiber.Ctx) error {
 		args = append(args, userID)
 	case "paciente":
 		// Paciente solo ve sus consultas
-		query = `SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
+		query = `SELECT c.id_consulta, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
 				 c.id_horario, c.fecha, c.estado, c.created_at,
 				 p.nombre as paciente_nombre, m.nombre as medico_nombre
 				 FROM Consulta c
@@ -137,7 +137,7 @@ func ObtenerConsultas(c *fiber.Ctx) error {
 	var consultas []ConsultaDetalle
 	for rows.Next() {
 		var consulta ConsultaDetalle
-		err := rows.Scan(&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo,
+		err := rows.Scan(&consulta.ID, &consulta.Diagnostico, &consulta.Costo,
 			&consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario, &consulta.Fecha,
 			&consulta.Estado, &consulta.CreatedAt, &consulta.PacienteNombre, &consulta.MedicoNombre)
 		if err != nil {
@@ -162,17 +162,17 @@ func ActualizarConsulta(c *fiber.Ctx) error {
 	}
 
 	// Verificar permisos
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
-	if userType != "medico" && userType != "admin" {
+	if userRole != "medico" && userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden actualizar consultas",
 		})
 	}
 
 	// Si es médico, verificar que sea su consulta
-	if userType == "medico" {
+	if userRole == "medico" {
 		var medicoConsulta int
 		err := database.GetDB().QueryRow(context.Background(),
 			"SELECT id_medico FROM Consulta WHERE id_consulta = $1", id).Scan(&medicoConsulta)
@@ -190,11 +190,11 @@ func ActualizarConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Actualizar consulta
+	// Actualizar consulta (sin campo tipo)
 	_, err = database.GetDB().Exec(context.Background(),
-		`UPDATE Consulta SET tipo = $1, diagnostico = $2, costo = $3, estado = $4, updated_at = $5
-		 WHERE id_consulta = $6`,
-		consulta.Tipo, consulta.Diagnostico, consulta.Costo, consulta.Estado, time.Now(), id)
+		`UPDATE Consulta SET diagnostico = $1, costo = $2, estado = $3, updated_at = $4
+		 WHERE id_consulta = $5`,
+		consulta.Diagnostico, consulta.Costo, consulta.Estado, time.Now(), id)
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -216,7 +216,7 @@ func ObtenerConsultaPorID(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	var consulta models.Consulta
@@ -235,15 +235,15 @@ func ObtenerConsultaPorID(c *fiber.Ctx) error {
 		JOIN Consultorio co ON h.id_consultorio = co.id_consultorio
 		WHERE c.id_consulta = $1`
 
-	// Agregar filtros según el tipo de usuario
-	if userType == "paciente" {
+	// Agregar filtros según el rol de usuario
+	if userRole == "paciente" {
 		query += " AND c.id_paciente = $2"
 		err = database.GetDB().QueryRow(context.Background(), query, id, userID).Scan(
 			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
 			&consulta.FechaConsulta, &consulta.Motivo, &consulta.Diagnostico, &consulta.Tratamiento,
 			&consulta.Observaciones, &consulta.Estado, &consulta.CreatedAt, &consulta.UpdatedAt,
 			&nombrePaciente, &nombreMedico, &nombreConsultorio)
-	} else if userType == "medico" {
+	} else if userRole == "medico" {
 		query += " AND c.id_medico = $2"
 		err = database.GetDB().QueryRow(context.Background(), query, id, userID).Scan(
 			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
@@ -282,11 +282,11 @@ func ObtenerConsultasPorPaciente(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Verificar permisos
-	if userType == "paciente" && pacienteID != userID {
+	if userRole == "paciente" && pacienteID != userID {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No puedes ver las consultas de otro paciente",
 		})
@@ -348,11 +348,11 @@ func ObtenerConsultasPorMedico(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Verificar permisos
-	if userType == "medico" && medicoID != userID {
+	if userRole == "medico" && medicoID != userID {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No puedes ver las consultas de otro médico",
 		})
@@ -414,11 +414,11 @@ func CompletarConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Solo médicos pueden completar consultas
-	if userType != "medico" {
+	if userRole != "medico" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden completar consultas",
 		})
@@ -465,7 +465,7 @@ func CancelarConsulta(c *fiber.Ctx) error {
 	}
 
 	// Verificar permisos
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Obtener información de la consulta
@@ -481,12 +481,12 @@ func CancelarConsulta(c *fiber.Ctx) error {
 	}
 
 	// Verificar permisos específicos
-	if userType == "paciente" && consulta.IDPaciente != userID {
+	if userRole == "paciente" && consulta.IDPaciente != userID {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No puedes cancelar esta consulta",
 		})
 	}
-	if userType == "medico" && consulta.IDMedico != userID {
+	if userRole == "medico" && consulta.IDMedico != userID {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No puedes cancelar esta consulta",
 		})

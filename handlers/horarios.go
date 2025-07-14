@@ -12,8 +12,8 @@ import (
 // CrearHorario crea un nuevo horario médico
 func CrearHorario(c *fiber.Ctx) error {
 	// Solo admin puede crear horarios
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden crear horarios",
 		})
@@ -33,17 +33,19 @@ func CrearHorario(c *fiber.Ctx) error {
 		})
 	}
 
-	// Verificar que el médico existe y es de tipo médico
-	var medicoTipo string
+	// Verificar que el médico existe y tiene rol de médico
+	var rolNombre string
 	err := database.GetDB().QueryRow(context.Background(),
-		"SELECT tipo FROM Usuario WHERE id_usuario = $1", horario.IDMedico).Scan(&medicoTipo)
+		`SELECT r.nombre FROM Usuario u 
+		 JOIN Rol r ON u.id_rol = r.id_rol 
+		 WHERE u.id_usuario = $1`, horario.IDMedico).Scan(&rolNombre)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{
 			"error": "Médico no encontrado",
 		})
 	}
 
-	if medicoTipo != "medico" {
+	if rolNombre != "medico" {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "El usuario especificado no es un médico",
 		})
@@ -102,13 +104,13 @@ func CrearHorario(c *fiber.Ctx) error {
 
 // ObtenerHorarios obtiene todos los horarios (con filtros según el rol)
 func ObtenerHorarios(c *fiber.Ctx) error {
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	var query string
 	var args []interface{}
 
-	switch userType {
+	switch userRole {
 	case "admin", "enfermera":
 		// Admin y enfermeras pueden ver todos los horarios
 		query = `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible,
@@ -177,6 +179,7 @@ func ObtenerHorarios(c *fiber.Ctx) error {
 }
 
 // ObtenerHorarioPorID obtiene un horario específico por ID
+// ObtenerHorarioPorID - Línea 191
 func ObtenerHorarioPorID(c *fiber.Ctx) error {
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
@@ -186,7 +189,7 @@ func ObtenerHorarioPorID(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Construir query según el rol
@@ -201,7 +204,7 @@ func ObtenerHorarioPorID(c *fiber.Ctx) error {
 	args = append(args, id)
 
 	// Agregar filtros según el rol
-	switch userType {
+	switch userRole {
 	case "medico":
 		query += " AND h.id_medico = $2"
 		args = append(args, userID)
@@ -242,8 +245,8 @@ func ObtenerHorarioPorID(c *fiber.Ctx) error {
 // ActualizarHorario actualiza un horario existente
 func ActualizarHorario(c *fiber.Ctx) error {
 	// Solo admin puede actualizar horarios
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden actualizar horarios",
 		})
@@ -285,16 +288,18 @@ func ActualizarHorario(c *fiber.Ctx) error {
 
 	// Si se cambia el médico, verificar que existe y es médico
 	if horarioActualizado.IDMedico != 0 && horarioActualizado.IDMedico != horarioExistente.IDMedico {
-		var medicoTipo string
+		var rolNombre string
 		err := database.GetDB().QueryRow(context.Background(),
-			"SELECT tipo FROM Usuario WHERE id_usuario = $1", horarioActualizado.IDMedico).Scan(&medicoTipo)
+			`SELECT r.nombre FROM Usuario u 
+			 JOIN Rol r ON u.id_rol = r.id_rol 
+			 WHERE u.id_usuario = $1`, horarioActualizado.IDMedico).Scan(&rolNombre)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{
 				"error": "Médico no encontrado",
 			})
 		}
 
-		if medicoTipo != "medico" {
+		if rolNombre != "medico" {
 			return c.Status(400).JSON(fiber.Map{
 				"error": "El usuario especificado no es un médico",
 			})
@@ -353,11 +358,11 @@ func ActualizarHorario(c *fiber.Ctx) error {
 	})
 }
 
-// EliminarHorario elimina un horario
+// Línea 363 - En EliminarHorario
 func EliminarHorario(c *fiber.Ctx) error {
 	// Solo admin puede eliminar horarios
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden eliminar horarios",
 		})
@@ -407,11 +412,11 @@ func EliminarHorario(c *fiber.Ctx) error {
 	})
 }
 
-// CambiarDisponibilidadHorario cambia la disponibilidad de un horario
+// CambiarDisponibilidadHorario - Línea 433
 func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 	// Admin y médicos pueden cambiar disponibilidad
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" && userType != "medico" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" && userRole != "medico" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores y médicos pueden cambiar la disponibilidad",
 		})
@@ -431,7 +436,7 @@ func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 	var query string
 	var args []interface{}
 
-	if userType == "admin" {
+	if userRole == "admin" {
 		// Admin puede cambiar cualquier horario
 		query = "SELECT id_horario, consulta_disponible FROM Horario WHERE id_horario = $1"
 		args = append(args, id)
@@ -482,7 +487,7 @@ func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"mensaje":              mensaje,
+		"mensaje":                 mensaje,
 		"disponibilidad_anterior": disponibilidadActual,
 		"disponibilidad_nueva":    req.Disponible,
 	})
@@ -533,7 +538,7 @@ func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 	})
 }
 
-// ObtenerHorariosPorMedico obtiene todos los horarios de un médico específico
+// ObtenerHorariosPorMedico - Línea 550
 func ObtenerHorariosPorMedico(c *fiber.Ctx) error {
 	medicoIDParam := c.Params("medico_id")
 	medicoID, err := strconv.Atoi(medicoIDParam)
@@ -543,11 +548,11 @@ func ObtenerHorariosPorMedico(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Verificar permisos
-	switch userType {
+	switch userRole {
 	case "medico":
 		// Médico solo puede ver sus propios horarios
 		if userID != medicoID {
@@ -565,17 +570,19 @@ func ObtenerHorariosPorMedico(c *fiber.Ctx) error {
 		})
 	}
 
-	// Verificar que el médico existe
-	var medicoTipo string
+	// Verificar que el médico existe y tiene rol de médico
+	var rolNombre string
 	err = database.GetDB().QueryRow(context.Background(),
-		"SELECT tipo FROM Usuario WHERE id_usuario = $1", medicoID).Scan(&medicoTipo)
+		`SELECT r.nombre FROM Usuario u 
+		 JOIN Rol r ON u.id_rol = r.id_rol 
+		 WHERE u.id_usuario = $1`, medicoID).Scan(&rolNombre)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{
 			"error": "Médico no encontrado",
 		})
 	}
 
-	if medicoTipo != "medico" {
+	if rolNombre != "medico" {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "El usuario especificado no es un médico",
 		})
@@ -583,7 +590,7 @@ func ObtenerHorariosPorMedico(c *fiber.Ctx) error {
 
 	// Construir query según el rol
 	var query string
-	if userType == "paciente" {
+	if userRole == "paciente" {
 		query = `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible,
 				 u.nombre as medico_nombre, c.nombre_numero as consultorio_nombre
 				 FROM Horario h
@@ -630,8 +637,8 @@ func ObtenerHorariosPorMedico(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"horarios":   horarios,
-		"total":      len(horarios),
-		"medico_id":  medicoID,
+		"horarios":  horarios,
+		"total":     len(horarios),
+		"medico_id": medicoID,
 	})
 }

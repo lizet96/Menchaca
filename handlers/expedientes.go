@@ -20,17 +20,19 @@ func CrearExpediente(c *fiber.Ctx) error {
 	}
 
 	// Solo médicos y admin pueden crear expedientes
-	userType := c.Locals("user_type").(string)
-	if userType != "medico" && userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "medico" && userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden crear expedientes",
 		})
 	}
 
-	// Verificar que el paciente existe
+	// Verificar que el paciente existe y tiene rol de paciente
 	var existePaciente int
 	err := database.GetDB().QueryRow(context.Background(),
-		"SELECT COUNT(*) FROM Usuario WHERE id_usuario = $1 AND tipo = 'paciente'", expediente.IDPaciente).Scan(&existePaciente)
+		`SELECT COUNT(*) FROM Usuario u 
+		 JOIN Rol r ON u.id_rol = r.id_rol 
+		 WHERE u.id_usuario = $1 AND r.nombre = 'paciente'`, expediente.IDPaciente).Scan(&existePaciente)
 	if err != nil || existePaciente == 0 {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "Paciente no encontrado",
@@ -67,7 +69,7 @@ func CrearExpediente(c *fiber.Ctx) error {
 	}
 
 	return c.Status(201).JSON(fiber.Map{
-		"mensaje":        "Expediente creado exitosamente",
+		"mensaje":       "Expediente creado exitosamente",
 		"id_expediente": nuevoID,
 	})
 }
@@ -75,12 +77,12 @@ func CrearExpediente(c *fiber.Ctx) error {
 // ObtenerExpedientes obtiene expedientes según permisos del usuario
 func ObtenerExpedientes(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 
 	var query string
 	var args []interface{}
 
-	switch userType {
+	switch userRole {
 	case "admin":
 		// Admin puede ver todos los expedientes
 		query = `SELECT e.id_expediente, e.antecedentes, e.historial_clinico, e.seguro, 
@@ -153,7 +155,7 @@ func ObtenerExpedientePorID(c *fiber.Ctx) error {
 	}
 
 	userID := c.Locals("user_id").(int)
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 
 	// Obtener expediente
 	var expediente models.Expediente
@@ -175,7 +177,7 @@ func ObtenerExpedientePorID(c *fiber.Ctx) error {
 	}
 
 	// Verificar permisos
-	switch userType {
+	switch userRole {
 	case "admin":
 		// Admin puede ver cualquier expediente
 	case "medico":
@@ -218,15 +220,15 @@ func ActualizarExpediente(c *fiber.Ctx) error {
 	}
 
 	// Solo médicos y admin pueden actualizar expedientes
-	userType := c.Locals("user_type").(string)
-	if userType != "medico" && userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "medico" && userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo médicos pueden actualizar expedientes",
 		})
 	}
 
 	// Si es médico, verificar que tenga acceso al expediente
-	if userType == "medico" {
+	if userRole == "medico" {
 		userID := c.Locals("user_id").(int)
 		var idPaciente int
 		err := database.GetDB().QueryRow(context.Background(),
@@ -281,11 +283,11 @@ func ObtenerExpedientePorPaciente(c *fiber.Ctx) error {
 		})
 	}
 
-	userType := c.Locals("user_type").(string)
+	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
 	// Verificar permisos
-	if userType == "paciente" && pacienteID != userID {
+	if userRole == "paciente" && pacienteID != userID {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No puedes ver los expedientes de otro paciente",
 		})
@@ -324,15 +326,15 @@ func ObtenerExpedientePorPaciente(c *fiber.Ctx) error {
 		}
 
 		expedientes = append(expedientes, map[string]interface{}{
-			"expediente": expediente,
+			"expediente":      expediente,
 			"nombre_paciente": nombrePaciente,
-			"email": email,
+			"email":           email,
 		})
 	}
 
 	return c.JSON(fiber.Map{
 		"expedientes": expedientes,
-		"total": len(expedientes),
+		"total":       len(expedientes),
 	})
 }
 
@@ -346,8 +348,8 @@ func EliminarExpediente(c *fiber.Ctx) error {
 	}
 
 	// Solo admin puede eliminar expedientes
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden eliminar expedientes",
 		})

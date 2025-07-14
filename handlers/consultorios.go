@@ -12,8 +12,8 @@ import (
 // CrearConsultorio crea un nuevo consultorio
 func CrearConsultorio(c *fiber.Ctx) error {
 	// Solo admin puede crear consultorios
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden crear consultorios",
 		})
@@ -125,8 +125,8 @@ func ObtenerConsultorioPorID(c *fiber.Ctx) error {
 // ActualizarConsultorio actualiza un consultorio existente
 func ActualizarConsultorio(c *fiber.Ctx) error {
 	// Solo admin puede actualizar consultorios
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden actualizar consultorios",
 		})
@@ -200,8 +200,8 @@ func ActualizarConsultorio(c *fiber.Ctx) error {
 // EliminarConsultorio elimina un consultorio
 func EliminarConsultorio(c *fiber.Ctx) error {
 	// Solo admin puede eliminar consultorios
-	userType := c.Locals("user_type").(string)
-	if userType != "admin" {
+	userRole := c.Locals("user_role").(string)
+	if userRole != "admin" {
 		return c.Status(403).JSON(fiber.Map{
 			"error": "Solo administradores pueden eliminar consultorios",
 		})
