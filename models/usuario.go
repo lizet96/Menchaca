@@ -12,8 +12,6 @@ type Usuario struct {
 	Email           string    `json:"email" db:"email"`
 	Password        string    `json:"password,omitempty" db:"password"`
 	FechaNacimiento string    `json:"fecha_nacimiento" db:"fecha_nacimiento"`
-	Telefono        string    `json:"telefono" db:"telefono"`
-	Direccion       string    `json:"direccion" db:"direccion"`
 	IDRol           int       `json:"id_rol" db:"id_rol"`
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`

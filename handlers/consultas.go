@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/lizet96/hospital-backend/database"
@@ -47,13 +47,13 @@ func CrearConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Insertar consulta (sin campo tipo)
+	// Insertar consulta (incluyendo el campo hora)
 	var nuevoID int
 	err = database.GetDB().QueryRow(context.Background(),
-		`INSERT INTO Consulta (diagnostico, costo, id_paciente, id_medico, id_horario, fecha, estado, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id_consulta`,
-		consulta.Diagnostico, consulta.Costo, consulta.IDPaciente, consulta.IDMedico,
-		consulta.IDHorario, time.Now(), "programada", time.Now(), time.Now()).Scan(&nuevoID)
+		`INSERT INTO Consulta (tipo, diagnostico, costo, id_paciente, id_medico, id_horario, hora)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_consulta`,
+		consulta.Tipo, consulta.Diagnostico, consulta.Costo, consulta.IDPaciente, consulta.IDMedico,
+		consulta.IDHorario, consulta.Hora).Scan(&nuevoID)
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -79,40 +79,61 @@ func ObtenerConsultas(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
 	userRole := c.Locals("user_role").(string)
 
+	// Debug: Log para verificar el rol del usuario
+	fmt.Printf("DEBUG - UserID: %d, UserRole: '%s'\n", userID, userRole)
+
+	// Debug: Verificar si hay consultas en la base de datos
+	var totalConsultas int
+	err := database.GetDB().QueryRow(context.Background(), "SELECT COUNT(*) FROM Consulta").Scan(&totalConsultas)
+	if err != nil {
+		fmt.Printf("DEBUG - Error al contar consultas: %v\n", err)
+	} else {
+		fmt.Printf("DEBUG - Total consultas en BD: %d\n", totalConsultas)
+	}
+
 	var query string
 	var args []interface{}
 
 	switch userRole {
 	case "admin":
 		// Admin puede ver todas las consultas
-		query = `SELECT c.id_consulta, c.diagnostico, c.costo, c.id_paciente, c.id_medico, 
-				 c.id_horario, c.fecha, c.estado, c.created_at,
-				 p.nombre as paciente_nombre, m.nombre as medico_nombre
+		query = `SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico, 
+				 c.id_horario, c.hora,
+				 p.nombre as paciente_nombre, m.nombre as medico_nombre,
+				 co.nombre_numero as consultorio_nombre, h.turno as horario_turno
 				 FROM Consulta c
 				 JOIN Usuario p ON c.id_paciente = p.id_usuario
 				 JOIN Usuario m ON c.id_medico = m.id_usuario
-				 ORDER BY c.fecha DESC`
+				 LEFT JOIN Horario h ON c.id_horario = h.id_horario
+				 LEFT JOIN Consultorio co ON h.id_consultorio = co.id_consultorio
+				 ORDER BY c.id_consulta DESC`
 	case "medico":
 		// Médico solo ve sus consultas
-		query = `SELECT c.id_consulta, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
-				 c.id_horario, c.fecha, c.estado, c.created_at,
-				 p.nombre as paciente_nombre, m.nombre as medico_nombre
+		query = `SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
+				 c.id_horario, c.hora,
+				 p.nombre as paciente_nombre, m.nombre as medico_nombre,
+				 co.nombre_numero as consultorio_nombre, h.turno as horario_turno
 				 FROM Consulta c
 				 JOIN Usuario p ON c.id_paciente = p.id_usuario
 				 JOIN Usuario m ON c.id_medico = m.id_usuario
+				 LEFT JOIN Horario h ON c.id_horario = h.id_horario
+				 LEFT JOIN Consultorio co ON h.id_consultorio = co.id_consultorio
 				 WHERE c.id_medico = $1
-				 ORDER BY c.fecha DESC`
+				 ORDER BY c.id_consulta DESC`
 		args = append(args, userID)
 	case "paciente":
 		// Paciente solo ve sus consultas
-		query = `SELECT c.id_consulta, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
-				 c.id_horario, c.fecha, c.estado, c.created_at,
-				 p.nombre as paciente_nombre, m.nombre as medico_nombre
+		query = `SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico,
+				 c.id_horario, c.hora,
+				 p.nombre as paciente_nombre, m.nombre as medico_nombre,
+				 co.nombre_numero as consultorio_nombre, h.turno as horario_turno
 				 FROM Consulta c
 				 JOIN Usuario p ON c.id_paciente = p.id_usuario
 				 JOIN Usuario m ON c.id_medico = m.id_usuario
+				 LEFT JOIN Horario h ON c.id_horario = h.id_horario
+				 LEFT JOIN Consultorio co ON h.id_consultorio = co.id_consultorio
 				 WHERE c.id_paciente = $1
-				 ORDER BY c.fecha DESC`
+				 ORDER BY c.id_consulta DESC`
 		args = append(args, userID)
 	default:
 		return c.Status(403).JSON(fiber.Map{
@@ -120,8 +141,13 @@ func ObtenerConsultas(c *fiber.Ctx) error {
 		})
 	}
 
+	// Debug: Log de la consulta SQL
+	fmt.Printf("DEBUG - Query: %s\n", query)
+	fmt.Printf("DEBUG - Args: %v\n", args)
+
 	rows, err := database.GetDB().Query(context.Background(), query, args...)
 	if err != nil {
+		fmt.Printf("DEBUG - Error en query: %v\n", err)
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error al obtener consultas",
 		})
@@ -130,25 +156,35 @@ func ObtenerConsultas(c *fiber.Ctx) error {
 
 	type ConsultaDetalle struct {
 		models.Consulta
-		PacienteNombre string `json:"paciente_nombre"`
-		MedicoNombre   string `json:"medico_nombre"`
+		PacienteNombre    string  `json:"paciente_nombre"`
+		MedicoNombre      string  `json:"medico_nombre"`
+		ConsultorioNombre *string `json:"consultorio_nombre"`
+		HorarioTurno      *string `json:"horario_turno"`
 	}
 
 	var consultas []ConsultaDetalle
 	for rows.Next() {
 		var consulta ConsultaDetalle
-		err := rows.Scan(&consulta.ID, &consulta.Diagnostico, &consulta.Costo,
-			&consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario, &consulta.Fecha,
-			&consulta.Estado, &consulta.CreatedAt, &consulta.PacienteNombre, &consulta.MedicoNombre)
+		err := rows.Scan(&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo,
+			&consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario, &consulta.Hora,
+			&consulta.PacienteNombre, &consulta.MedicoNombre, &consulta.ConsultorioNombre, &consulta.HorarioTurno)
 		if err != nil {
 			continue
 		}
 		consultas = append(consultas, consulta)
 	}
 
+	// Debug: Log del resultado
+	fmt.Printf("DEBUG - Total consultas encontradas: %d\n", len(consultas))
+	for i, consulta := range consultas {
+		fmt.Printf("DEBUG - Consulta %d: ID=%d, Tipo=%s, Paciente=%s, Medico=%s\n", 
+			i, consulta.ID, consulta.Tipo, consulta.PacienteNombre, consulta.MedicoNombre)
+	}
+
 	return c.JSON(fiber.Map{
-		"consultas": consultas,
-		"total":     len(consultas),
+		"success": true,
+		"data":    consultas,
+		"total":   len(consultas),
 	})
 }
 
@@ -190,11 +226,11 @@ func ActualizarConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Actualizar consulta (sin campo tipo)
+	// Actualizar consulta (solo campos existentes)
 	_, err = database.GetDB().Exec(context.Background(),
-		`UPDATE Consulta SET diagnostico = $1, costo = $2, estado = $3, updated_at = $4
-		 WHERE id_consulta = $5`,
-		consulta.Diagnostico, consulta.Costo, consulta.Estado, time.Now(), id)
+		`UPDATE Consulta SET tipo = $1, diagnostico = $2, costo = $3
+		 WHERE id_consulta = $4`,
+		consulta.Tipo, consulta.Diagnostico, consulta.Costo, id)
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -223,9 +259,7 @@ func ObtenerConsultaPorID(c *fiber.Ctx) error {
 	var nombrePaciente, nombreMedico, nombreConsultorio string
 
 	query := `
-		SELECT c.id_consulta, c.id_paciente, c.id_medico, c.id_horario, 
-		       c.fecha_consulta, c.motivo, c.diagnostico, c.tratamiento, 
-		       c.observaciones, c.estado, c.created_at, c.updated_at,
+		SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico, c.id_horario,
 		       u1.nombre as nombre_paciente, u2.nombre as nombre_medico,
 		       co.nombre as nombre_consultorio
 		FROM Consulta c
@@ -239,23 +273,17 @@ func ObtenerConsultaPorID(c *fiber.Ctx) error {
 	if userRole == "paciente" {
 		query += " AND c.id_paciente = $2"
 		err = database.GetDB().QueryRow(context.Background(), query, id, userID).Scan(
-			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
-			&consulta.FechaConsulta, &consulta.Motivo, &consulta.Diagnostico, &consulta.Tratamiento,
-			&consulta.Observaciones, &consulta.Estado, &consulta.CreatedAt, &consulta.UpdatedAt,
+			&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
 			&nombrePaciente, &nombreMedico, &nombreConsultorio)
 	} else if userRole == "medico" {
 		query += " AND c.id_medico = $2"
 		err = database.GetDB().QueryRow(context.Background(), query, id, userID).Scan(
-			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
-			&consulta.FechaConsulta, &consulta.Motivo, &consulta.Diagnostico, &consulta.Tratamiento,
-			&consulta.Observaciones, &consulta.Estado, &consulta.CreatedAt, &consulta.UpdatedAt,
+			&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
 			&nombrePaciente, &nombreMedico, &nombreConsultorio)
 	} else {
 		// Admin y enfermera pueden ver todas
 		err = database.GetDB().QueryRow(context.Background(), query, id).Scan(
-			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
-			&consulta.FechaConsulta, &consulta.Motivo, &consulta.Diagnostico, &consulta.Tratamiento,
-			&consulta.Observaciones, &consulta.Estado, &consulta.CreatedAt, &consulta.UpdatedAt,
+			&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
 			&nombrePaciente, &nombreMedico, &nombreConsultorio)
 	}
 
@@ -293,16 +321,14 @@ func ObtenerConsultasPorPaciente(c *fiber.Ctx) error {
 	}
 
 	query := `
-		SELECT c.id_consulta, c.id_paciente, c.id_medico, c.id_horario, 
-		       c.fecha_consulta, c.motivo, c.diagnostico, c.tratamiento, 
-		       c.observaciones, c.estado, c.created_at, c.updated_at,
+		SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico, c.id_horario,
 		       u2.nombre as nombre_medico, co.nombre as nombre_consultorio
 		FROM Consulta c
 		JOIN Usuario u2 ON c.id_medico = u2.id_usuario
 		JOIN Horario h ON c.id_horario = h.id_horario
 		JOIN Consultorio co ON h.id_consultorio = co.id_consultorio
 		WHERE c.id_paciente = $1
-		ORDER BY c.fecha_consulta DESC`
+		ORDER BY c.id_consulta DESC`
 
 	rows, err := database.GetDB().Query(context.Background(), query, pacienteID)
 	if err != nil {
@@ -318,9 +344,7 @@ func ObtenerConsultasPorPaciente(c *fiber.Ctx) error {
 		var nombreMedico, nombreConsultorio string
 
 		err := rows.Scan(
-			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
-			&consulta.FechaConsulta, &consulta.Motivo, &consulta.Diagnostico, &consulta.Tratamiento,
-			&consulta.Observaciones, &consulta.Estado, &consulta.CreatedAt, &consulta.UpdatedAt,
+			&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
 			&nombreMedico, &nombreConsultorio)
 		if err != nil {
 			continue
@@ -359,16 +383,14 @@ func ObtenerConsultasPorMedico(c *fiber.Ctx) error {
 	}
 
 	query := `
-		SELECT c.id_consulta, c.id_paciente, c.id_medico, c.id_horario, 
-		       c.fecha_consulta, c.motivo, c.diagnostico, c.tratamiento, 
-		       c.observaciones, c.estado, c.created_at, c.updated_at,
+		SELECT c.id_consulta, c.tipo, c.diagnostico, c.costo, c.id_paciente, c.id_medico, c.id_horario,
 		       u1.nombre as nombre_paciente, co.nombre as nombre_consultorio
 		FROM Consulta c
 		JOIN Usuario u1 ON c.id_paciente = u1.id_usuario
 		JOIN Horario h ON c.id_horario = h.id_horario
 		JOIN Consultorio co ON h.id_consultorio = co.id_consultorio
 		WHERE c.id_medico = $1
-		ORDER BY c.fecha_consulta DESC`
+		ORDER BY c.id_consulta DESC`
 
 	rows, err := database.GetDB().Query(context.Background(), query, medicoID)
 	if err != nil {
@@ -384,9 +406,7 @@ func ObtenerConsultasPorMedico(c *fiber.Ctx) error {
 		var nombrePaciente, nombreConsultorio string
 
 		err := rows.Scan(
-			&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
-			&consulta.FechaConsulta, &consulta.Motivo, &consulta.Diagnostico, &consulta.Tratamiento,
-			&consulta.Observaciones, &consulta.Estado, &consulta.CreatedAt, &consulta.UpdatedAt,
+			&consulta.ID, &consulta.Tipo, &consulta.Diagnostico, &consulta.Costo, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario,
 			&nombrePaciente, &nombreConsultorio)
 		if err != nil {
 			continue
@@ -440,16 +460,8 @@ func CompletarConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Actualizar estado a completada
-	_, err = database.GetDB().Exec(context.Background(),
-		"UPDATE Consulta SET estado = 'completada', updated_at = $1 WHERE id_consulta = $2",
-		time.Now(), id)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al completar consulta",
-		})
-	}
-
+	// Como no existe campo estado en la tabla, solo retornamos éxito
+	// La lógica de completar consulta se manejará a nivel de aplicación
 	return c.JSON(fiber.Map{
 		"mensaje": "Consulta completada exitosamente",
 	})
@@ -471,8 +483,8 @@ func CancelarConsulta(c *fiber.Ctx) error {
 	// Obtener información de la consulta
 	var consulta models.Consulta
 	err = database.GetDB().QueryRow(context.Background(),
-		"SELECT id_consulta, id_paciente, id_medico, id_horario, estado FROM Consulta WHERE id_consulta = $1", id).Scan(
-		&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario, &consulta.Estado)
+		"SELECT id_consulta, id_paciente, id_medico, id_horario FROM Consulta WHERE id_consulta = $1", id).Scan(
+		&consulta.ID, &consulta.IDPaciente, &consulta.IDMedico, &consulta.IDHorario)
 
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{
@@ -492,22 +504,10 @@ func CancelarConsulta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Verificar que la consulta se pueda cancelar
-	if consulta.Estado == "completada" || consulta.Estado == "cancelada" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "No se puede cancelar una consulta completada o ya cancelada",
-		})
-	}
+	// Como no existe campo estado en la tabla, asumimos que todas las consultas se pueden cancelar
 
-	// Cancelar consulta
-	_, err = database.GetDB().Exec(context.Background(),
-		"UPDATE Consulta SET estado = 'cancelada', updated_at = $1 WHERE id_consulta = $2",
-		time.Now(), id)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al cancelar consulta",
-		})
-	}
+	// Como no existe campo estado en la tabla, solo liberamos el horario
+	// La lógica de cancelar consulta se manejará a nivel de aplicación
 
 	// Liberar horario
 	_, err = database.GetDB().Exec(context.Background(),

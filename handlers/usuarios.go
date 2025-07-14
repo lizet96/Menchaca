@@ -576,10 +576,12 @@ func ActualizarUsuario(c *fiber.Ctx) error {
 
 	var usuario models.Usuario
 	if err := c.BodyParser(&usuario); err != nil {
+		fmt.Printf("❌ CrearUsuario: Error parsing body: %v\n", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": "Datos inválidos",
 		})
 	}
+	fmt.Printf("✅ CrearUsuario: Body parsed successfully\n")
 
 	// Si se está actualizando la contraseña, validarla
 	if usuario.Password != "" {
@@ -599,9 +601,19 @@ func ActualizarUsuario(c *fiber.Ctx) error {
 	}
 
 	// Actualizar usuario
-	_, err = database.GetDB().Exec(context.Background(),
-		"UPDATE Usuario SET nombre = $1, email = $2, updated_at = $3 WHERE id_usuario = $4",
-		usuario.Nombre, usuario.Email, time.Now(), id)
+	query := "UPDATE Usuario SET nombre = $1, apellido = $2, email = $3, fecha_nacimiento = $4, id_rol = $5, updated_at = $6"
+	args := []interface{}{usuario.Nombre, usuario.Apellido, usuario.Email, usuario.FechaNacimiento, usuario.IDRol, time.Now()}
+
+	// Si hay contraseña, incluirla en la actualización
+	if usuario.Password != "" {
+		query += ", password = $7 WHERE id_usuario = $8"
+		args = append(args, usuario.Password, id)
+	} else {
+		query += " WHERE id_usuario = $7"
+		args = append(args, id)
+	}
+
+	_, err = database.GetDB().Exec(context.Background(), query, args...)
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -1167,8 +1179,11 @@ func ObtenerPermisosPorRol(c *fiber.Ctx) error {
 
 // CrearUsuario crea un nuevo usuario
 func CrearUsuario(c *fiber.Ctx) error {
+	fmt.Printf("🔍 CrearUsuario: Iniciando creación de usuario\n")
+
 	// Verificar permisos usando el nuevo sistema
 	if !hasPermission(c, "usuarios_create") {
+		fmt.Printf("❌ CrearUsuario: Sin permisos\n")
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No tienes permisos para crear usuarios",
 		})
@@ -1176,10 +1191,12 @@ func CrearUsuario(c *fiber.Ctx) error {
 
 	var usuario models.Usuario
 	if err := c.BodyParser(&usuario); err != nil {
+		fmt.Printf("❌ CrearUsuario: Error parsing body: %v\n", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": "Datos inválidos",
 		})
 	}
+	fmt.Printf("✅ CrearUsuario: Body parsed successfully: %+v\n", usuario)
 
 	// Validaciones
 	if usuario.Nombre == "" || usuario.Apellido == "" || usuario.Email == "" || usuario.Password == "" {
@@ -1206,11 +1223,14 @@ func CrearUsuario(c *fiber.Ctx) error {
 	}
 
 	// Validar contraseña segura
+	fmt.Printf("🔍 CrearUsuario: Validando contraseña\n")
 	if err := middleware.ValidateStrongPassword(usuario.Password); err != nil {
+		fmt.Printf("❌ CrearUsuario: Error validando contraseña: %v\n", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
+	fmt.Printf("✅ CrearUsuario: Contraseña válida\n")
 
 	// Verificar si el email ya existe
 	var existe int
@@ -1228,33 +1248,114 @@ func CrearUsuario(c *fiber.Ctx) error {
 	}
 
 	// Encriptar contraseña
+	fmt.Printf("🔍 CrearUsuario: Encriptando contraseña\n")
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(usuario.Password), bcrypt.DefaultCost)
 	if err != nil {
+		fmt.Printf("❌ CrearUsuario: Error encriptando contraseña: %v\n", err)
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error al procesar contraseña",
 		})
 	}
+	fmt.Printf("✅ CrearUsuario: Contraseña encriptada\n")
 
 	// Insertar usuario sin el campo 'tipo'
 	query := `
-		INSERT INTO Usuario (nombre, apellido, email, password, fecha_nacimiento, telefono, direccion, id_rol, created_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP) 
+		INSERT INTO Usuario (nombre, apellido, email, password, fecha_nacimiento, id_rol, created_at) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7) 
 		RETURNING id_usuario
 	`
 
 	var nuevoID int
+	fmt.Printf("🔍 CrearUsuario: Ejecutando INSERT query\n")
 	err = database.GetDB().QueryRow(context.Background(), query,
 		usuario.Nombre, usuario.Apellido, usuario.Email, string(hashedPassword),
-		usuario.FechaNacimiento, usuario.Telefono, usuario.Direccion, usuario.IDRol).Scan(&nuevoID)
+		usuario.FechaNacimiento, usuario.IDRol, time.Now()).Scan(&nuevoID)
 
 	if err != nil {
+		fmt.Printf("❌ CrearUsuario: Error en INSERT: %v\n", err)
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error al crear usuario",
 		})
 	}
+	fmt.Printf("✅ CrearUsuario: Usuario creado con ID: %d\n", nuevoID)
 
 	return c.Status(201).JSON(fiber.Map{
 		"message": "Usuario creado exitosamente",
 		"user_id": nuevoID,
+	})
+}
+
+// ObtenerUsuariosPorRol obtiene usuarios por rol
+func ObtenerUsuariosPorRol(c *fiber.Ctx) error {
+	rolID, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "ID de rol inválido",
+		})
+	}
+
+	rows, err := database.GetDB().Query(context.Background(),
+		`SELECT u.id_usuario, u.nombre, u.apellido, u.fecha_nacimiento, u.id_rol, u.email, u.created_at, r.nombre as rol_nombre
+		 FROM Usuario u 
+		 JOIN Rol r ON u.id_rol = r.id_rol 
+		 WHERE u.id_rol = $1
+		 ORDER BY u.created_at DESC`, rolID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Error al obtener usuarios por rol",
+		})
+	}
+	defer rows.Close()
+
+	var usuarios []models.UsuarioResponse
+	for rows.Next() {
+		var usuario models.UsuarioResponse
+		var rolNombre string
+		err := rows.Scan(&usuario.ID, &usuario.Nombre, &usuario.Apellido, &usuario.FechaNacimiento,
+			&usuario.IDRol, &usuario.Email, &usuario.CreatedAt, &rolNombre)
+		if err != nil {
+			continue
+		}
+		usuarios = append(usuarios, usuario)
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    usuarios,
+		"total":   len(usuarios),
+	})
+}
+
+// ObtenerPacientes obtiene todos los pacientes (usuarios con rol de paciente)
+func ObtenerPacientes(c *fiber.Ctx) error {
+	rows, err := database.GetDB().Query(context.Background(),
+		`SELECT u.id_usuario, u.nombre, u.apellido, u.fecha_nacimiento, u.id_rol, u.email, u.created_at, r.nombre as rol_nombre
+		 FROM Usuario u 
+		 JOIN Rol r ON u.id_rol = r.id_rol 
+		 WHERE r.nombre = 'paciente'
+		 ORDER BY u.created_at DESC`)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Error al obtener pacientes",
+		})
+	}
+	defer rows.Close()
+
+	var pacientes []models.UsuarioResponse
+	for rows.Next() {
+		var paciente models.UsuarioResponse
+		var rolNombre string
+		err := rows.Scan(&paciente.ID, &paciente.Nombre, &paciente.Apellido, &paciente.FechaNacimiento,
+			&paciente.IDRol, &paciente.Email, &paciente.CreatedAt, &rolNombre)
+		if err != nil {
+			continue
+		}
+		pacientes = append(pacientes, paciente)
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    pacientes,
+		"total":   len(pacientes),
 	})
 }

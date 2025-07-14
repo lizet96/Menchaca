@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -159,18 +160,24 @@ func ObtenerHorarios(c *fiber.Ctx) error {
 	}
 
 	var horarios []HorarioDetalle
+	log.Println("DEBUG - Iniciando escaneo de filas")
 	for rows.Next() {
 		var horario HorarioDetalle
 		err := rows.Scan(
 			&horario.IDHorario, &horario.Turno, &horario.IDMedico,
-			&horario.IDConsultorio, &horario.ConsultaDisponible,
+			&horario.IDConsultorio, &horario.ConsultaDisponible, &horario.FechaHora,
 			&horario.MedicoNombre, &horario.ConsultorioNombre,
 		)
 		if err != nil {
-			continue
+			log.Println("DEBUG - Error en scan:", err)
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Error al procesar horarios disponibles",
+				"details": err.Error(),
+			})
 		}
 		horarios = append(horarios, horario)
 	}
+	log.Println("DEBUG - Total horarios encontrados:", len(horarios))
 
 	return c.JSON(fiber.Map{
 		"horarios": horarios,
@@ -495,8 +502,11 @@ func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 
 // ObtenerHorariosDisponibles obtiene solo los horarios disponibles
 func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
+	// Debug: Log que se está ejecutando la función
+	log.Println("DEBUG - Ejecutando ObtenerHorariosDisponibles")
+	
 	// Obtener horarios disponibles para citas
-	query := `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible,
+	query := `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible, h.fecha_hora,
 			  u.nombre as medico_nombre, c.nombre_numero as consultorio_nombre
 			  FROM Horario h
 			  JOIN Usuario u ON h.id_medico = u.id_usuario
@@ -504,10 +514,14 @@ func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 			  WHERE h.consulta_disponible = true
 			  ORDER BY h.turno, u.nombre`
 
+	log.Println("DEBUG - Query:", query)
+	
 	rows, err := database.GetDB().Query(context.Background(), query)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
+		log.Println("DEBUG - Error en query:", err)
+		return c.Status(400).JSON(fiber.Map{
 			"error": "Error al obtener horarios disponibles",
+			"details": err.Error(),
 		})
 	}
 	defer rows.Close()
@@ -533,8 +547,9 @@ func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"horarios_disponibles": horarios,
-		"total":                len(horarios),
+		"success": true,
+		"data":    horarios,
+		"total":   len(horarios),
 	})
 }
 

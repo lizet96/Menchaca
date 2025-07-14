@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -180,12 +181,17 @@ func RequireRole(allowedRoles ...string) fiber.Handler {
 // Eliminar RequirePermissionHybrid completamente y usar solo RequirePermission
 func RequirePermission(permiso string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		log.Printf("DEBUG - RequirePermission: Verificando permiso '%s'", permiso)
+		
 		userID, ok := c.Locals("user_id").(int)
 		if !ok {
+			log.Println("DEBUG - RequirePermission: Usuario no autenticado")
 			return c.Status(401).JSON(fiber.Map{
 				"error": "Usuario no autenticado",
 			})
 		}
+		
+		log.Printf("DEBUG - RequirePermission: UserID=%d, Permiso=%s", userID, permiso)
 
 		// Verificar permiso en la base de datos
 		var tienePermiso bool
@@ -200,12 +206,23 @@ func RequirePermission(permiso string) fiber.Handler {
         `
 
 		err := database.GetDB().QueryRow(context.Background(), query, userID, permiso).Scan(&tienePermiso)
-		if err != nil || !tienePermiso {
+		if err != nil {
+			log.Printf("DEBUG - RequirePermission: Error en query: %v", err)
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Error interno del servidor",
+			})
+		}
+		
+		log.Printf("DEBUG - RequirePermission: TienePermiso=%t", tienePermiso)
+		
+		if !tienePermiso {
+			log.Printf("DEBUG - RequirePermission: Acceso denegado para permiso '%s'", permiso)
 			return c.Status(403).JSON(fiber.Map{
 				"error": "Acceso denegado: permisos insuficientes",
 			})
 		}
-
+		
+		log.Printf("DEBUG - RequirePermission: Permiso '%s' concedido", permiso)
 		return c.Next()
 	}
 }

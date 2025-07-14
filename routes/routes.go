@@ -50,6 +50,11 @@ func SetupRoutes(app *fiber.App) {
 	usuarios.Get("/:id", middleware.RequirePermission("usuarios_read"), handlers.ObtenerUsuarioPorID)
 	usuarios.Put("/:id", middleware.RequirePermission("usuarios_update"), handlers.ActualizarUsuario)
 	usuarios.Delete("/:id", middleware.RequirePermission("usuarios_delete"), handlers.EliminarUsuario)
+	usuarios.Get("/role/:id", middleware.RequirePermission("usuarios_read"), handlers.ObtenerUsuariosPorRol)
+
+	// --- RUTAS DE PACIENTES ---
+	pacientes := protected.Group("/pacientes")
+	pacientes.Get("/", middleware.RequirePermission("usuarios_read"), handlers.ObtenerPacientes)
 
 	// --- RUTAS DE ROLES Y PERMISOS ---
 	roles := protected.Group("/roles")
@@ -106,11 +111,12 @@ func SetupRoutes(app *fiber.App) {
 
 	// --- RUTAS DE HORARIOS ---
 	horarios := protected.Group("/horarios")
-	horarios.Post("/", middleware.RequirePermission("consultorios_create"), handlers.CrearHorario)
-	horarios.Get("/", middleware.RequirePermission("consultorios_read"), handlers.ObtenerHorarios)
-	horarios.Get("/:id", middleware.RequirePermission("consultorios_read"), handlers.ObtenerHorarioPorID)
-	horarios.Put("/:id", middleware.RequirePermission("consultorios_update"), handlers.ActualizarHorario)
-	horarios.Delete("/:id", middleware.RequirePermission("consultorios_delete"), handlers.EliminarHorario)
-	horarios.Get("/medico/:medico_id", middleware.RequirePermission("consultorios_read"), handlers.ObtenerHorariosPorMedico)
-	horarios.Put("/:id/disponibilidad", middleware.RequirePermission("consultorios_update"), handlers.CambiarDisponibilidadHorario)
+	horarios.Post("/", middleware.RequirePermission("horarios_create"), handlers.CrearHorario)
+	horarios.Get("/", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorarios)
+	horarios.Get("/:id", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorarioPorID)
+	horarios.Put("/:id", middleware.RequirePermission("horarios_update"), handlers.ActualizarHorario)
+	horarios.Delete("/:id", middleware.RequirePermission("horarios_delete"), handlers.EliminarHorario)
+	horarios.Get("/medico/:medico_id", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorariosPorMedico)
+	horarios.Put("/:id/disponibilidad", middleware.RequirePermission("horarios_update"), handlers.CambiarDisponibilidadHorario)
+	horarios.Get("/disponibles", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorariosDisponibles)
 }

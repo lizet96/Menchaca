@@ -37,7 +37,6 @@ func main() {
 	// Configurar rutas
 	routes.SetupRoutes(app)
 
-	
 	app.Use(func(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{
 			"error":   "Ruta no encontrada",
