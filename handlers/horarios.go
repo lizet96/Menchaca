@@ -171,7 +171,7 @@ func ObtenerHorarios(c *fiber.Ctx) error {
 		if err != nil {
 			log.Println("DEBUG - Error en scan:", err)
 			return c.Status(400).JSON(fiber.Map{
-				"error": "Error al procesar horarios disponibles",
+				"error":   "Error al procesar horarios disponibles",
 				"details": err.Error(),
 			})
 		}
@@ -504,7 +504,7 @@ func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 	// Debug: Log que se está ejecutando la función
 	log.Println("DEBUG - Ejecutando ObtenerHorariosDisponibles")
-	
+
 	// Obtener horarios disponibles para citas
 	query := `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible, h.fecha_hora,
 			  u.nombre as medico_nombre, c.nombre_numero as consultorio_nombre
@@ -515,12 +515,12 @@ func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 			  ORDER BY h.turno, u.nombre`
 
 	log.Println("DEBUG - Query:", query)
-	
+
 	rows, err := database.GetDB().Query(context.Background(), query)
 	if err != nil {
 		log.Println("DEBUG - Error en query:", err)
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Error al obtener horarios disponibles",
+			"error":   "Error al obtener horarios disponibles",
 			"details": err.Error(),
 		})
 	}

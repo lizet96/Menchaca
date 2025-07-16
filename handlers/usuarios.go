@@ -751,7 +751,15 @@ func RefreshToken(c *fiber.Ctx) error {
 
 // Logout revoca todos los refresh tokens del usuario
 func Logout(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int)
+	// Verificar si el usuario está autenticado
+	userID, ok := c.Locals("user_id").(int)
+	if !ok {
+		// Si no hay usuario autenticado, aún así devolver éxito
+		// para evitar errores en el frontend
+		return c.JSON(fiber.Map{
+			"mensaje": "Sesión cerrada exitosamente",
+		})
+	}
 
 	// Revocar todos los refresh tokens del usuario
 	_, err := database.GetDB().Exec(context.Background(),
@@ -759,13 +767,41 @@ func Logout(c *fiber.Ctx) error {
 		userID)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al cerrar sesión",
-		})
+		// Log del error pero no fallar el logout
+		fmt.Printf("⚠️ Error al revocar tokens para usuario %d: %v\n", userID, err)
 	}
 
 	return c.JSON(fiber.Map{
 		"mensaje": "Sesión cerrada exitosamente",
+	})
+}
+
+// LimpiarTodasLasSesiones revoca todos los refresh tokens del sistema (función administrativa)
+func LimpiarTodasLasSesiones(c *fiber.Ctx) error {
+	// Solo admin puede ejecutar esta función
+	if !hasPermission(c, "usuarios_delete") {
+		return c.Status(403).JSON(fiber.Map{
+			"error": "No tienes permisos para ejecutar esta acción",
+		})
+	}
+
+	// Revocar todos los refresh tokens del sistema
+	result, err := database.GetDB().Exec(context.Background(),
+		"UPDATE refresh_tokens SET is_revoked = true WHERE is_revoked = false")
+
+	if err != nil {
+		fmt.Printf("❌ Error al limpiar sesiones: %v\n", err)
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Error al limpiar sesiones",
+		})
+	}
+
+	rowsAffected := result.RowsAffected()
+	fmt.Printf("✅ Sesiones limpiadas: %d tokens revocados\n", rowsAffected)
+
+	return c.JSON(fiber.Map{
+		"mensaje": "Todas las sesiones han sido limpiadas exitosamente",
+		"tokens_revocados": rowsAffected,
 	})
 }
 

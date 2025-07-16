@@ -20,11 +20,11 @@ func ConnectDB() {
 	if err != nil {
 		log.Fatalf("❌ Error al parsear la URL de la base de datos: %v", err)
 	}
-	config.MaxConns = 30 // Número máximo de conexiones abiertas al mismo tiempo
-	config.MinConns = 5  // Número mínimo de conexiones que se mantienen abiertas en espera
+	config.MaxConns = 30               // Número máximo de conexiones abiertas al mismo tiempo
+	config.MinConns = 5                // Número mínimo de conexiones que se mantienen abiertas en espera
 	config.MaxConnLifetime = time.Hour // Tiempo máximo que puede vivir una conexión antes de ser cerrada
 
-	// Tiempo máximo que una conexión puede estar inactiva 
+	// Tiempo máximo que una conexión puede estar inactiva
 	config.MaxConnIdleTime = time.Minute * 30
 	// Cambiar el modo de ejecución de queries a "Simple Protocol"
 	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol

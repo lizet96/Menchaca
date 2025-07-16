@@ -37,7 +37,7 @@ func SetupRoutes(app *fiber.App) {
 	auth.Post("/register", handlers.RegistrarUsuario)
 	auth.Post("/login", handlers.Login) // ← Cambiar de LoginWithMFA a Login
 	auth.Post("/refresh", handlers.RefreshToken)
-	auth.Post("/logout", middleware.JWTMiddleware(), handlers.Logout)
+	auth.Post("/logout", middleware.JWTMiddlewareOptional(), handlers.Logout)
 
 	// === RUTAS PROTEGIDAS (Requieren autenticación) ===
 	protected := api.Group("/", middleware.JWTMiddleware())
@@ -51,6 +51,10 @@ func SetupRoutes(app *fiber.App) {
 	usuarios.Put("/:id", middleware.RequirePermission("usuarios_update"), handlers.ActualizarUsuario)
 	usuarios.Delete("/:id", middleware.RequirePermission("usuarios_delete"), handlers.EliminarUsuario)
 	usuarios.Get("/role/:id", middleware.RequirePermission("usuarios_read"), handlers.ObtenerUsuariosPorRol)
+
+	// --- RUTAS ADMINISTRATIVAS ---
+	admin := protected.Group("/admin")
+	admin.Post("/limpiar-sesiones", middleware.RequirePermission("usuarios_delete"), handlers.LimpiarTodasLasSesiones)
 
 	// --- RUTAS DE PACIENTES ---
 	pacientes := protected.Group("/pacientes")

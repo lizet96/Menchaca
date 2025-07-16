@@ -178,6 +178,54 @@ func RequireRole(allowedRoles ...string) fiber.Handler {
 	}
 }
 
+// JWTMiddlewareOptional middleware para validar access tokens de forma opcional (para logout)
+func JWTMiddlewareOptional() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Obtener el token del header Authorization
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			// No hay token, continuar sin autenticación
+			return c.Next()
+		}
+
+		// Verificar que el token tenga el formato "Bearer <token>"
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if tokenString == authHeader {
+			// Formato inválido, continuar sin autenticación
+			return c.Next()
+		}
+
+		// Intentar validar el access token
+		claims, err := ValidateToken(tokenString, "access")
+		if err != nil {
+			// Token inválido o expirado, continuar sin autenticación
+			return c.Next()
+		}
+
+		// Obtener información del rol desde la base de datos
+		var rolNombre string
+		var idRol int
+		err = database.GetDB().QueryRow(context.Background(), `
+            SELECT u.id_rol, r.nombre 
+            FROM Usuario u 
+            JOIN Rol r ON u.id_rol = r.id_rol 
+            WHERE u.id_usuario = $1 AND r.activo = true
+        `, claims.UserID).Scan(&idRol, &rolNombre)
+
+		if err != nil {
+			// Usuario o rol no válido, continuar sin autenticación
+			return c.Next()
+		}
+
+		// Guardar información del usuario en el contexto
+		c.Locals("user_id", claims.UserID)
+		c.Locals("user_role", rolNombre)
+		c.Locals("id_rol", idRol)
+
+		return c.Next()
+	}
+}
+
 // Eliminar RequirePermissionHybrid completamente y usar solo RequirePermission
 func RequirePermission(permiso string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
