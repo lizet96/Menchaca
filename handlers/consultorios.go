@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/lizet96/hospital-backend/database"
+	"github.com/lizet96/hospital-backend/middleware"
 	"github.com/lizet96/hospital-backend/models"
 )
 
@@ -14,22 +15,34 @@ func CrearConsultorio(c *fiber.Ctx) error {
 	// Solo admin puede crear consultorios
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores pueden crear consultorios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F50",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores pueden crear consultorios"}},
+			},
 		})
 	}
 
 	var consultorio models.Consultorio
 	if err := c.BodyParser(&consultorio); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Datos inválidos",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F50",
+				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+			},
 		})
 	}
 
 	// Validaciones
 	if consultorio.NombreNumero == "" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "El nombre/número del consultorio es requerido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F50",
+				Data:    []interface{}{fiber.Map{"error": "El nombre/número del consultorio es requerido"}},
+			},
 		})
 	}
 
@@ -38,14 +51,22 @@ func CrearConsultorio(c *fiber.Ctx) error {
 	err := database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE nombre_numero = $1)", consultorio.NombreNumero).Scan(&existe)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar consultorio",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F50",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar consultorio"}},
+			},
 		})
 	}
 
 	if existe {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "Ya existe un consultorio con ese nombre/número",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F50",
+				Data:    []interface{}{fiber.Map{"error": "Ya existe un consultorio con ese nombre/número"}},
+			},
 		})
 	}
 
@@ -55,14 +76,36 @@ func CrearConsultorio(c *fiber.Ctx) error {
 		consultorio.Ubicacion, consultorio.NombreNumero).Scan(&consultorio.IDConsultorio)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al crear el consultorio",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F50",
+				Data:    []interface{}{fiber.Map{"error": "Error al crear el consultorio"}},
+			},
 		})
 	}
 
-	return c.Status(201).JSON(fiber.Map{
-		"consultorio": consultorio,
-		"mensaje":     "Consultorio creado exitosamente",
+	// Log evento de creación de consultorio
+	middleware.LogCustomEvent(
+		models.LogLevelSuccess,
+		"Consultorio creado",
+		c.Locals("user_email").(string),
+		userRole,
+		map[string]interface{}{
+			"consultorio_id": consultorio.IDConsultorio,
+			"nombre_numero":  consultorio.NombreNumero,
+			"ubicacion":      consultorio.Ubicacion,
+			"created_by":     c.Locals("user_email"),
+			"action":         "consultorio_created",
+		},
+	)
+
+	return c.Status(201).JSON(StandardResponse{
+		StatusCode: 201,
+		Body: BodyResponse{
+			IntCode: "S50",
+			Data:    []interface{}{fiber.Map{"consultorio": consultorio, "mensaje": "Consultorio creado exitosamente"}},
+		},
 	})
 }
 
@@ -73,8 +116,12 @@ func ObtenerConsultorios(c *fiber.Ctx) error {
 
 	rows, err := database.GetDB().Query(context.Background(), query)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al obtener consultorios",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener consultorios"}},
+			},
 		})
 	}
 	defer rows.Close()
@@ -89,9 +136,12 @@ func ObtenerConsultorios(c *fiber.Ctx) error {
 		consultorios = append(consultorios, consultorio)
 	}
 
-	return c.JSON(fiber.Map{
-		"consultorios": consultorios,
-		"total":        len(consultorios),
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S51",
+			Data:    []interface{}{fiber.Map{"consultorios": consultorios, "total": len(consultorios)}},
+		},
 	})
 }
 
@@ -100,8 +150,12 @@ func ObtenerConsultorioPorID(c *fiber.Ctx) error {
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -112,13 +166,21 @@ func ObtenerConsultorioPorID(c *fiber.Ctx) error {
 		&consultorio.IDConsultorio, &consultorio.Ubicacion, &consultorio.NombreNumero)
 
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Consultorio no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"consultorio": consultorio,
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S51",
+			Data:    []interface{}{fiber.Map{"consultorio": consultorio}},
+		},
 	})
 }
 
@@ -127,16 +189,24 @@ func ActualizarConsultorio(c *fiber.Ctx) error {
 	// Solo admin puede actualizar consultorios
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores pueden actualizar consultorios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores pueden actualizar consultorios"}},
+			},
 		})
 	}
 
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -145,22 +215,34 @@ func ActualizarConsultorio(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE id_consultorio = $1)", id).Scan(&existe)
 	if err != nil || !existe {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Consultorio no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
 	var consultorioActualizado models.Consultorio
 	if err := c.BodyParser(&consultorioActualizado); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Datos inválidos",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+			},
 		})
 	}
 
 	// Validaciones
 	if consultorioActualizado.NombreNumero == "" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "El nombre/número del consultorio es requerido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "El nombre/número del consultorio es requerido"}},
+			},
 		})
 	}
 
@@ -170,14 +252,22 @@ func ActualizarConsultorio(c *fiber.Ctx) error {
 		"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE nombre_numero = $1 AND id_consultorio != $2)",
 		consultorioActualizado.NombreNumero, id).Scan(&existeOtro)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar consultorio",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar consultorio"}},
+			},
 		})
 	}
 
 	if existeOtro {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "Ya existe otro consultorio con ese nombre/número",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Ya existe otro consultorio con ese nombre/número"}},
+			},
 		})
 	}
 
@@ -187,13 +277,36 @@ func ActualizarConsultorio(c *fiber.Ctx) error {
 		consultorioActualizado.Ubicacion, consultorioActualizado.NombreNumero, id)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al actualizar el consultorio",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Error al actualizar el consultorio"}},
+			},
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"mensaje": "Consultorio actualizado exitosamente",
+	// Log evento de actualización de consultorio
+	middleware.LogCustomEvent(
+		models.LogLevelInfo,
+		"Consultorio actualizado",
+		c.Locals("user_email").(string),
+		userRole,
+		map[string]interface{}{
+			"consultorio_id": id,
+			"nombre_numero":  consultorioActualizado.NombreNumero,
+			"ubicacion":      consultorioActualizado.Ubicacion,
+			"updated_by":     c.Locals("user_email"),
+			"action":         "consultorio_updated",
+		},
+	)
+
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S52",
+			Data:    []interface{}{fiber.Map{"mensaje": "Consultorio actualizado exitosamente"}},
+		},
 	})
 }
 
@@ -202,16 +315,24 @@ func EliminarConsultorio(c *fiber.Ctx) error {
 	// Solo admin puede eliminar consultorios
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores pueden eliminar consultorios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores pueden eliminar consultorios"}},
+			},
 		})
 	}
 
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -220,14 +341,22 @@ func EliminarConsultorio(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Horario WHERE id_consultorio = $1)", id).Scan(&tieneHorarios)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar horarios asociados",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar horarios asociados"}},
+			},
 		})
 	}
 
 	if tieneHorarios {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "No se puede eliminar el consultorio porque tiene horarios asociados",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "No se puede eliminar el consultorio porque tiene horarios asociados"}},
+			},
 		})
 	}
 
@@ -236,14 +365,36 @@ func EliminarConsultorio(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Receta WHERE id_consultorio = $1)", id).Scan(&tieneRecetas)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar recetas asociadas",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar recetas asociadas"}},
+			},
 		})
 	}
 
 	if tieneRecetas {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "No se puede eliminar el consultorio porque tiene recetas asociadas",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "No se puede eliminar el consultorio porque tiene recetas asociadas"}},
+			},
+		})
+	}
+
+	// Obtener información del consultorio antes de eliminarlo
+	var nombreNumero, ubicacion string
+	err = database.GetDB().QueryRow(context.Background(),
+		"SELECT nombre_numero, ubicacion FROM Consultorio WHERE id_consultorio = $1", id).Scan(&nombreNumero, &ubicacion)
+	if err != nil {
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
@@ -251,19 +402,46 @@ func EliminarConsultorio(c *fiber.Ctx) error {
 	result, err := database.GetDB().Exec(context.Background(),
 		"DELETE FROM Consultorio WHERE id_consultorio = $1", id)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al eliminar el consultorio",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Error al eliminar el consultorio"}},
+			},
 		})
 	}
 
 	if result.RowsAffected() == 0 {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Consultorio no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F52",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"mensaje": "Consultorio eliminado exitosamente",
+	// Log evento de eliminación de consultorio
+	middleware.LogCustomEvent(
+		models.LogLevelWarning,
+		"Consultorio eliminado",
+		c.Locals("user_email").(string),
+		userRole,
+		map[string]interface{}{
+			"consultorio_id": id,
+			"nombre_numero":  nombreNumero,
+			"ubicacion":      ubicacion,
+			"deleted_by":     c.Locals("user_email"),
+			"action":         "consultorio_deleted",
+		},
+	)
+
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S52",
+			Data:    []interface{}{fiber.Map{"mensaje": "Consultorio eliminado exitosamente"}},
+		},
 	})
 }
 
@@ -278,8 +456,12 @@ func ObtenerConsultoriosDisponibles(c *fiber.Ctx) error {
 
 	rows, err := database.GetDB().Query(context.Background(), query)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al obtener consultorios disponibles",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener consultorios disponibles"}},
+			},
 		})
 	}
 	defer rows.Close()
@@ -294,9 +476,12 @@ func ObtenerConsultoriosDisponibles(c *fiber.Ctx) error {
 		consultorios = append(consultorios, consultorio)
 	}
 
-	return c.JSON(fiber.Map{
-		"consultorios_disponibles": consultorios,
-		"total":                    len(consultorios),
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S51",
+			Data:    []interface{}{fiber.Map{"consultorios_disponibles": consultorios, "total": len(consultorios)}},
+		},
 	})
 }
 
@@ -305,8 +490,12 @@ func ObtenerHorariosPorConsultorio(c *fiber.Ctx) error {
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -315,8 +504,12 @@ func ObtenerHorariosPorConsultorio(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE id_consultorio = $1)", id).Scan(&existe)
 	if err != nil || !existe {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Consultorio no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
@@ -330,8 +523,12 @@ func ObtenerHorariosPorConsultorio(c *fiber.Ctx) error {
 
 	rows, err := database.GetDB().Query(context.Background(), query, id)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al obtener horarios del consultorio",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F51",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener horarios del consultorio"}},
+			},
 		})
 	}
 	defer rows.Close()
@@ -354,9 +551,11 @@ func ObtenerHorariosPorConsultorio(c *fiber.Ctx) error {
 		horarios = append(horarios, horario)
 	}
 
-	return c.JSON(fiber.Map{
-		"horarios":       horarios,
-		"total":          len(horarios),
-		"consultorio_id": id,
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S51",
+			Data:    []interface{}{fiber.Map{"horarios": horarios, "total": len(horarios), "consultorio_id": id}},
+		},
 	})
 }

@@ -6,14 +6,14 @@ import (
 
 // Consulta representa la tabla Consulta en la base de datos
 type Consulta struct {
-	ID         int       `json:"id_consulta" db:"id_consulta"`
-	Tipo       string    `json:"tipo" db:"tipo"`
-	Diagnostico string   `json:"diagnostico" db:"diagnostico"`
-	Costo      float64   `json:"costo" db:"costo"`
-	IDPaciente int       `json:"id_paciente" db:"id_paciente"`
-	IDMedico   int       `json:"id_medico" db:"id_medico"`
-	IDHorario  int       `json:"id_horario" db:"id_horario"`
-	Hora       time.Time `json:"hora" db:"hora"`
+	ID          int       `json:"id_consulta" db:"id_consulta"`
+	Tipo        string    `json:"tipo" db:"tipo"`
+	Diagnostico string    `json:"diagnostico" db:"diagnostico"`
+	Costo       float64   `json:"costo" db:"costo"`
+	IDPaciente  int       `json:"id_paciente" db:"id_paciente"`
+	IDMedico    int       `json:"id_medico" db:"id_medico"`
+	IDHorario   *int      `json:"id_horario" db:"id_horario"` // Changed from int to *int to handle NULL
+	Hora        time.Time `json:"hora" db:"hora"`
 }
 
 // CitaRequest representa una solicitud para crear una cita

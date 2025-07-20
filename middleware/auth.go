@@ -230,7 +230,7 @@ func JWTMiddlewareOptional() fiber.Handler {
 func RequirePermission(permiso string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		log.Printf("DEBUG - RequirePermission: Verificando permiso '%s'", permiso)
-		
+
 		userID, ok := c.Locals("user_id").(int)
 		if !ok {
 			log.Println("DEBUG - RequirePermission: Usuario no autenticado")
@@ -238,7 +238,7 @@ func RequirePermission(permiso string) fiber.Handler {
 				"error": "Usuario no autenticado",
 			})
 		}
-		
+
 		log.Printf("DEBUG - RequirePermission: UserID=%d, Permiso=%s", userID, permiso)
 
 		// Verificar permiso en la base de datos
@@ -260,16 +260,16 @@ func RequirePermission(permiso string) fiber.Handler {
 				"error": "Error interno del servidor",
 			})
 		}
-		
+
 		log.Printf("DEBUG - RequirePermission: TienePermiso=%t", tienePermiso)
-		
+
 		if !tienePermiso {
 			log.Printf("DEBUG - RequirePermission: Acceso denegado para permiso '%s'", permiso)
 			return c.Status(403).JSON(fiber.Map{
 				"error": "Acceso denegado: permisos insuficientes",
 			})
 		}
-		
+
 		log.Printf("DEBUG - RequirePermission: Permiso '%s' concedido", permiso)
 		return c.Next()
 	}
@@ -277,8 +277,8 @@ func RequirePermission(permiso string) fiber.Handler {
 
 // ValidateStrongPassword valida que la contraseña cumpla con los requisitos de seguridad
 func ValidateStrongPassword(password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("la contraseña debe tener al menos 8 caracteres")
+	if len(password) < 12 {
+		return fmt.Errorf("debe tener al menos 12 caracteres")
 	}
 
 	hasUpper := false
@@ -299,17 +299,22 @@ func ValidateStrongPassword(password string) error {
 		}
 	}
 
+	var missingRequirements []string
 	if !hasUpper {
-		return fmt.Errorf("la contraseña debe contener al menos una letra mayúscula")
+		missingRequirements = append(missingRequirements, "al menos una letra mayúscula")
 	}
 	if !hasLower {
-		return fmt.Errorf("la contraseña debe contener al menos una letra minúscula")
+		missingRequirements = append(missingRequirements, "al menos una letra minúscula")
 	}
 	if !hasDigit {
-		return fmt.Errorf("la contraseña debe contener al menos un número")
+		missingRequirements = append(missingRequirements, "al menos un número")
 	}
 	if !hasSpecial {
-		return fmt.Errorf("la contraseña debe contener al menos un carácter especial")
+		missingRequirements = append(missingRequirements, "al menos un carácter especial (!@#$%^&*()_+-=[]{}|;:,.<>?)")
+	}
+
+	if len(missingRequirements) > 0 {
+		return fmt.Errorf("debe contener %s", strings.Join(missingRequirements, ", "))
 	}
 
 	return nil

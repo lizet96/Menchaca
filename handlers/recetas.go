@@ -7,32 +7,37 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/lizet96/hospital-backend/database"
+	"github.com/lizet96/hospital-backend/middleware"
 	"github.com/lizet96/hospital-backend/models"
 )
 
 // CrearReceta crea una nueva receta médica
 func CrearReceta(c *fiber.Ctx) error {
-	// Solo médicos pueden crear recetas
+	// El middleware RequirePermission ya verificó el permiso recetas_create
+	// No necesitamos validación adicional de rol
+	
 	userRole := c.Locals("user_role").(string)
-	if userRole != "medico" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo médicos pueden crear recetas",
-		})
-	}
-
 	medicoID := c.Locals("user_id").(int)
 
 	var receta models.Receta
 	if err := c.BodyParser(&receta); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Datos inválidos",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F70",
+				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+			},
 		})
 	}
 
-	// Validaciones
-	if receta.Medicamento == "" || receta.Dosis == "" || receta.IDPaciente == 0 || receta.IDConsultorio == 0 {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Medicamento, dosis, paciente y consultorio son requeridos",
+	// Validaciones (eliminar referencia a Dosis)
+	if receta.Medicamento == "" || receta.IDPaciente == 0 || receta.IDConsultorio == 0 {
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F70",
+				Data:    []interface{}{fiber.Map{"error": "Medicamento, paciente y consultorio son requeridos"}},
+			},
 		})
 	}
 
@@ -43,14 +48,22 @@ func CrearReceta(c *fiber.Ctx) error {
 		 JOIN Rol r ON u.id_rol = r.id_rol 
 		 WHERE u.id_usuario = $1`, receta.IDPaciente).Scan(&rolNombre)
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Paciente no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F70",
+				Data:    []interface{}{fiber.Map{"error": "Paciente no encontrado"}},
+			},
 		})
 	}
 
 	if rolNombre != "paciente" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "El usuario especificado no es un paciente",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F70",
+				Data:    []interface{}{fiber.Map{"error": "El usuario especificado no es un paciente"}},
+			},
 		})
 	}
 
@@ -59,8 +72,12 @@ func CrearReceta(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE id_consultorio = $1)", receta.IDConsultorio).Scan(&consultorioExiste)
 	if err != nil || !consultorioExiste {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Consultorio no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F70",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
@@ -69,24 +86,58 @@ func CrearReceta(c *fiber.Ctx) error {
 		receta.Fecha = time.Now()
 	}
 
-	// Insertar receta
-	query := `INSERT INTO Receta (fecha, medicamento, dosis, id_medico, id_paciente, id_consultorio) 
-			  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_receta`
+	// Insertar receta (eliminar dosis del INSERT)
+	query := `INSERT INTO Receta (fecha, medicamento, id_medico, id_paciente, id_consultorio) 
+			  VALUES ($1, $2, $3, $4, $5) RETURNING id_receta`
 
 	err = database.GetDB().QueryRow(context.Background(), query,
-		receta.Fecha, receta.Medicamento, receta.Dosis, medicoID, receta.IDPaciente, receta.IDConsultorio).Scan(&receta.IDReceta)
+		receta.Fecha, receta.Medicamento, medicoID, receta.IDPaciente, receta.IDConsultorio).Scan(&receta.IDReceta)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al crear la receta",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F11",
+				Data:    []interface{}{fiber.Map{"error": "Error al crear la receta"}},
+			},
 		})
 	}
 
 	receta.IDMedico = medicoID
 
-	return c.Status(201).JSON(fiber.Map{
-		"receta":  receta,
-		"mensaje": "Receta creada exitosamente",
+	// Log evento de creación de receta
+	userEmail := ""
+	if email := c.Locals("user_email"); email != nil {
+		userEmail = email.(string)
+	}
+	
+	middleware.LogCustomEvent(
+		models.LogLevelSuccess,
+		"Receta creada",
+		userEmail,
+		userRole,
+		map[string]interface{}{
+			"receta_id":      receta.IDReceta,
+			"paciente_id":    receta.IDPaciente,
+			"medico_id":      medicoID,
+			"consultorio_id": receta.IDConsultorio,
+			"medicamento":    receta.Medicamento,
+			"created_by":     userEmail,
+			"action":         "receta_created",
+		},
+	)
+
+	return c.Status(201).JSON(StandardResponse{
+		StatusCode: 201,
+		Body: BodyResponse{
+			IntCode: "S01",
+			Data: []interface{}{
+				fiber.Map{
+					"receta":  receta,
+					"mensaje": "Receta creada exitosamente",
+				},
+			},
+		},
 	})
 }
 
@@ -101,7 +152,7 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 	switch userRole {
 	case "admin":
 		// Admin puede ver todas las recetas
-		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
+		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.id_medico, r.id_paciente, r.id_consultorio,
 					 u_medico.nombre as medico_nombre, u_paciente.nombre as paciente_nombre, c.nombre_numero as consultorio_nombre
 					 FROM Receta r
 					 JOIN Usuario u_medico ON r.id_medico = u_medico.id_usuario
@@ -110,7 +161,7 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 					 ORDER BY r.fecha DESC`
 	case "medico":
 		// Médico solo ve sus propias recetas
-		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
+		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.id_medico, r.id_paciente, r.id_consultorio,
 					 u_medico.nombre as medico_nombre, u_paciente.nombre as paciente_nombre, c.nombre_numero as consultorio_nombre
 					 FROM Receta r
 					 JOIN Usuario u_medico ON r.id_medico = u_medico.id_usuario
@@ -121,7 +172,7 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 		args = append(args, userID)
 	case "paciente":
 		// Paciente solo ve sus propias recetas
-		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
+		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.id_medico, r.id_paciente, r.id_consultorio,
 					 u_medico.nombre as medico_nombre, u_paciente.nombre as paciente_nombre, c.nombre_numero as consultorio_nombre
 					 FROM Receta r
 					 JOIN Usuario u_medico ON r.id_medico = u_medico.id_usuario
@@ -132,7 +183,7 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 		args = append(args, userID)
 	case "enfermera":
 		// Enfermera puede ver todas las recetas para administración
-		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
+		query = `SELECT r.id_receta, r.fecha, r.medicamento, r.id_medico, r.id_paciente, r.id_consultorio,
 					 u_medico.nombre as medico_nombre, u_paciente.nombre as paciente_nombre, c.nombre_numero as consultorio_nombre
 					 FROM Receta r
 					 JOIN Usuario u_medico ON r.id_medico = u_medico.id_usuario
@@ -140,15 +191,23 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 					 JOIN Consultorio c ON r.id_consultorio = c.id_consultorio
 					 ORDER BY r.fecha DESC`
 	default:
-		return c.Status(403).JSON(fiber.Map{
-			"error": "No tienes permisos para ver recetas",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F70",
+				Data:    []interface{}{fiber.Map{"error": "No tienes permisos para ver recetas"}},
+			},
 		})
 	}
 
 	rows, err := database.GetDB().Query(context.Background(), query, args...)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al obtener recetas",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F11",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener recetas"}},
+			},
 		})
 	}
 	defer rows.Close()
@@ -164,7 +223,7 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 	for rows.Next() {
 		var receta RecetaDetalle
 		err := rows.Scan(
-			&receta.IDReceta, &receta.Fecha, &receta.Medicamento, &receta.Dosis,
+			&receta.IDReceta, &receta.Fecha, &receta.Medicamento,
 			&receta.IDMedico, &receta.IDPaciente, &receta.IDConsultorio,
 			&receta.MedicoNombre, &receta.PacienteNombre, &receta.ConsultorioNombre,
 		)
@@ -174,9 +233,18 @@ func ObtenerRecetas(c *fiber.Ctx) error {
 		recetas = append(recetas, receta)
 	}
 
-	return c.JSON(fiber.Map{
-		"recetas": recetas,
-		"total":   len(recetas),
+	// Usar el formato StandardResponse consistente
+	return c.Status(200).JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S01",
+			Data: []interface{}{
+				fiber.Map{
+					"recetas": recetas,
+					"total":   len(recetas),
+				},
+			},
+		},
 	})
 }
 
@@ -193,8 +261,8 @@ func ObtenerRecetaPorID(c *fiber.Ctx) error {
 	userRole := c.Locals("user_role").(string)
 	userID := c.Locals("user_id").(int)
 
-	// Construir query según el rol
-	query := `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
+	// Construir query según el rol (eliminar r.dosis)
+	query := `SELECT r.id_receta, r.fecha, r.medicamento, r.id_medico, r.id_paciente, r.id_consultorio,
 			  u_medico.nombre as medico_nombre, u_paciente.nombre as paciente_nombre, c.nombre_numero as consultorio_nombre
 			  FROM Receta r
 			  JOIN Usuario u_medico ON r.id_medico = u_medico.id_usuario
@@ -230,7 +298,7 @@ func ObtenerRecetaPorID(c *fiber.Ctx) error {
 
 	var receta RecetaDetalle
 	err = database.GetDB().QueryRow(context.Background(), query, args...).Scan(
-		&receta.IDReceta, &receta.Fecha, &receta.Medicamento, &receta.Dosis,
+		&receta.IDReceta, &receta.Fecha, &receta.Medicamento,
 		&receta.IDMedico, &receta.IDPaciente, &receta.IDConsultorio,
 		&receta.MedicoNombre, &receta.PacienteNombre, &receta.ConsultorioNombre,
 	)
@@ -285,24 +353,39 @@ func ActualizarReceta(c *fiber.Ctx) error {
 		})
 	}
 
-	// Validaciones
-	if recetaActualizada.Medicamento == "" || recetaActualizada.Dosis == "" {
+	// Validaciones (eliminar referencia a Dosis)
+	if recetaActualizada.Medicamento == "" {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "Medicamento y dosis son requeridos",
+			"error": "Medicamento es requerido",
 		})
 	}
 
-	// Actualizar receta
-	query := `UPDATE Receta SET medicamento = $1, dosis = $2 WHERE id_receta = $3 AND id_medico = $4`
+	// Actualizar receta (eliminar dosis)
+	query := `UPDATE Receta SET medicamento = $1 WHERE id_receta = $2 AND id_medico = $3`
 
 	_, err = database.GetDB().Exec(context.Background(), query,
-		recetaActualizada.Medicamento, recetaActualizada.Dosis, id, medicoID)
+		recetaActualizada.Medicamento, id, medicoID)
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error al actualizar la receta",
 		})
 	}
+
+	// Log evento (eliminar dosis del log)
+	middleware.LogCustomEvent(
+		models.LogLevelInfo,
+		"Receta actualizada",
+		c.Locals("user_email").(string),
+		userRole,
+		map[string]interface{}{
+			"receta_id":   id,
+			"medico_id":   medicoID,
+			"medicamento": recetaActualizada.Medicamento,
+			"updated_by":  c.Locals("user_email"),
+			"action":      "receta_updated",
+		},
+	)
 
 	return c.JSON(fiber.Map{
 		"mensaje": "Receta actualizada exitosamente",
@@ -329,6 +412,17 @@ func EliminarReceta(c *fiber.Ctx) error {
 
 	userID := c.Locals("user_id").(int)
 
+	// Obtener información de la receta antes de eliminarla
+	var medicoID, pacienteID, consultorioID int
+	var medicamento string
+	err = database.GetDB().QueryRow(context.Background(),
+		"SELECT id_medico, id_paciente, id_consultorio, medicamento FROM Receta WHERE id_receta = $1", id).Scan(&medicoID, &pacienteID, &consultorioID, &medicamento)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{
+			"error": "Receta no encontrada",
+		})
+	}
+
 	// Verificar permisos
 	var query string
 	var args []interface{}
@@ -339,6 +433,11 @@ func EliminarReceta(c *fiber.Ctx) error {
 		args = append(args, id)
 	} else {
 		// Médico solo puede eliminar sus propias recetas
+		if medicoID != userID {
+			return c.Status(403).JSON(fiber.Map{
+				"error": "No tienes permisos para eliminar esta receta",
+			})
+		}
 		query = "DELETE FROM Receta WHERE id_receta = $1 AND id_medico = $2"
 		args = append(args, id, userID)
 	}
@@ -355,6 +454,23 @@ func EliminarReceta(c *fiber.Ctx) error {
 			"error": "Receta no encontrada o no tienes permisos para eliminarla",
 		})
 	}
+
+	// Log evento de eliminación de receta
+	middleware.LogCustomEvent(
+		models.LogLevelWarning,
+		"Receta eliminada",
+		c.Locals("user_email").(string),
+		userRole,
+		map[string]interface{}{
+			"receta_id":      id,
+			"medico_id":      medicoID,
+			"paciente_id":    pacienteID,
+			"consultorio_id": consultorioID,
+			"medicamento":    medicamento,
+			"deleted_by":     c.Locals("user_email"),
+			"action":         "receta_deleted",
+		},
+	)
 
 	return c.JSON(fiber.Map{
 		"mensaje": "Receta eliminada exitosamente",
@@ -391,7 +507,7 @@ func ObtenerRecetasPorPaciente(c *fiber.Ctx) error {
 		})
 	}
 
-	query := `SELECT r.id_receta, r.fecha, r.medicamento, r.dosis, r.id_medico, r.id_paciente, r.id_consultorio,
+	query := `SELECT r.id_receta, r.fecha, r.medicamento, r.id_medico, r.id_paciente, r.id_consultorio,
 			  u_medico.nombre as medico_nombre, u_paciente.nombre as paciente_nombre, c.nombre_numero as consultorio_nombre
 			  FROM Receta r
 			  JOIN Usuario u_medico ON r.id_medico = u_medico.id_usuario
@@ -419,7 +535,7 @@ func ObtenerRecetasPorPaciente(c *fiber.Ctx) error {
 	for rows.Next() {
 		var receta RecetaDetalle
 		err := rows.Scan(
-			&receta.IDReceta, &receta.Fecha, &receta.Medicamento, &receta.Dosis,
+			&receta.IDReceta, &receta.Fecha, &receta.Medicamento,
 			&receta.IDMedico, &receta.IDPaciente, &receta.IDConsultorio,
 			&receta.MedicoNombre, &receta.PacienteNombre, &receta.ConsultorioNombre,
 		)

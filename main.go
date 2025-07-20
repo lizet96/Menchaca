@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
@@ -19,7 +20,7 @@ func main() {
 	database.ConnectDB()
 	defer database.CloseDB()
 	log.Println("Conexión a la base de datos establecida")
-	// Crear instancia de Fiber con configuración
+	// Crear instancia de Fiber con configuración y límites de seguridad
 	app := fiber.New(fiber.Config{
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
@@ -32,6 +33,16 @@ func main() {
 			})
 		},
 		AppName: "Hospital Management System API v1.0.0",
+		// Límites de lectura y seguridad
+		BodyLimit:         4 * 1024 * 1024,   // 4MB límite para el cuerpo de la petición
+		ReadTimeout:       30 * time.Second,  // 30 segundos para leer la petición
+		WriteTimeout:      30 * time.Second,  // 30 segundos para escribir la respuesta
+		IdleTimeout:       120 * time.Second, // 2 minutos de timeout para conexiones inactivas
+		ReadBufferSize:    4096,              // 4KB buffer de lectura
+		WriteBufferSize:   4096,              // 4KB buffer de escritura
+		ServerHeader:      "Hospital-API",    // Header personalizado del servidor
+		DisableKeepalive:  false,             // Mantener conexiones keep-alive habilitadas
+		ReduceMemoryUsage: true,              // Reducir uso de memoria
 	})
 
 	// Configurar rutas

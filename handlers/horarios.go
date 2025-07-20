@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/lizet96/hospital-backend/database"
+	"github.com/lizet96/hospital-backend/middleware"
 	"github.com/lizet96/hospital-backend/models"
 )
 
@@ -15,22 +16,34 @@ func CrearHorario(c *fiber.Ctx) error {
 	// Solo admin puede crear horarios
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores pueden crear horarios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores pueden crear horarios"}},
+			},
 		})
 	}
 
 	var horario models.Horario
 	if err := c.BodyParser(&horario); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Datos inválidos",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+			},
 		})
 	}
 
 	// Validaciones
 	if horario.Turno == "" || horario.IDMedico == 0 || horario.IDConsultorio == 0 {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Turno, médico y consultorio son requeridos",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Turno, médico y consultorio son requeridos"}},
+			},
 		})
 	}
 
@@ -41,14 +54,22 @@ func CrearHorario(c *fiber.Ctx) error {
 		 JOIN Rol r ON u.id_rol = r.id_rol 
 		 WHERE u.id_usuario = $1`, horario.IDMedico).Scan(&rolNombre)
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Médico no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Médico no encontrado"}},
+			},
 		})
 	}
 
 	if rolNombre != "medico" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "El usuario especificado no es un médico",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "El usuario especificado no es un médico"}},
+			},
 		})
 	}
 
@@ -57,8 +78,12 @@ func CrearHorario(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE id_consultorio = $1)", horario.IDConsultorio).Scan(&consultorioExiste)
 	if err != nil || !consultorioExiste {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Consultorio no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+			},
 		})
 	}
 
@@ -68,14 +93,22 @@ func CrearHorario(c *fiber.Ctx) error {
 		"SELECT EXISTS(SELECT 1 FROM Horario WHERE id_medico = $1 AND id_consultorio = $2 AND turno = $3)",
 		horario.IDMedico, horario.IDConsultorio, horario.Turno).Scan(&existeHorario)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar horario",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar horario"}},
+			},
 		})
 	}
 
 	if existeHorario {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "Ya existe un horario para este médico en este consultorio y turno",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Ya existe un horario para este médico en este consultorio y turno"}},
+			},
 		})
 	}
 
@@ -92,14 +125,44 @@ func CrearHorario(c *fiber.Ctx) error {
 		horario.Turno, horario.IDMedico, horario.IDConsultorio, horario.ConsultaDisponible).Scan(&horario.IDHorario)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al crear el horario",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F60",
+				Data:    []interface{}{fiber.Map{"error": "Error al crear el horario"}},
+			},
 		})
 	}
 
-	return c.Status(201).JSON(fiber.Map{
-		"horario": horario,
-		"mensaje": "Horario creado exitosamente",
+	// Log evento de creación de horario
+	userEmail := ""
+	if email := c.Locals("user_email"); email != nil {
+		if emailStr, ok := email.(string); ok {
+			userEmail = emailStr
+		}
+	}
+
+	middleware.LogCustomEvent(
+		models.LogLevelSuccess,
+		"Horario creado",
+		userEmail, // Usar la variable segura
+		userRole,
+		map[string]interface{}{
+			"horario_id":     horario.IDHorario,
+			"medico_id":      horario.IDMedico,
+			"consultorio_id": horario.IDConsultorio,
+			"turno":          horario.Turno,
+			"created_by":     userEmail,
+			"action":         "horario_created",
+		},
+	)
+
+	return c.Status(201).JSON(StandardResponse{
+		StatusCode: 201,
+		Body: BodyResponse{
+			IntCode: "S60",
+			Data:    []interface{}{fiber.Map{"horario": horario, "mensaje": "Horario creado exitosamente"}},
+		},
 	})
 }
 
@@ -140,15 +203,23 @@ func ObtenerHorarios(c *fiber.Ctx) error {
 					 WHERE h.consulta_disponible = true
 					 ORDER BY h.turno, u.nombre`
 	default:
-		return c.Status(403).JSON(fiber.Map{
-			"error": "No tienes permisos para ver horarios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F61",
+				Data:    []interface{}{fiber.Map{"error": "No tienes permisos para ver horarios"}},
+			},
 		})
 	}
 
 	rows, err := database.GetDB().Query(context.Background(), query, args...)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al obtener horarios",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F61",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener horarios"}},
+			},
 		})
 	}
 	defer rows.Close()
@@ -165,23 +236,29 @@ func ObtenerHorarios(c *fiber.Ctx) error {
 		var horario HorarioDetalle
 		err := rows.Scan(
 			&horario.IDHorario, &horario.Turno, &horario.IDMedico,
-			&horario.IDConsultorio, &horario.ConsultaDisponible, &horario.FechaHora,
+			&horario.IDConsultorio, &horario.ConsultaDisponible,
 			&horario.MedicoNombre, &horario.ConsultorioNombre,
 		)
 		if err != nil {
 			log.Println("DEBUG - Error en scan:", err)
-			return c.Status(400).JSON(fiber.Map{
-				"error":   "Error al procesar horarios disponibles",
-				"details": err.Error(),
+			return c.Status(400).JSON(StandardResponse{
+				StatusCode: 400,
+				Body: BodyResponse{
+					IntCode: "F61",
+					Data:    []interface{}{fiber.Map{"error": "Error al procesar horarios disponibles", "details": err.Error()}},
+				},
 			})
 		}
 		horarios = append(horarios, horario)
 	}
 	log.Println("DEBUG - Total horarios encontrados:", len(horarios))
 
-	return c.JSON(fiber.Map{
-		"horarios": horarios,
-		"total":    len(horarios),
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S61",
+			Data:    []interface{}{fiber.Map{"horarios": horarios, "total": len(horarios)}},
+		},
 	})
 }
 
@@ -191,8 +268,12 @@ func ObtenerHorarioPorID(c *fiber.Ctx) error {
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F61",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -220,8 +301,12 @@ func ObtenerHorarioPorID(c *fiber.Ctx) error {
 	case "admin", "enfermera":
 		// Pueden ver cualquier horario
 	default:
-		return c.Status(403).JSON(fiber.Map{
-			"error": "No tienes permisos para ver este horario",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F61",
+				Data:    []interface{}{fiber.Map{"error": "No tienes permisos para ver este horario"}},
+			},
 		})
 	}
 
@@ -239,13 +324,21 @@ func ObtenerHorarioPorID(c *fiber.Ctx) error {
 	)
 
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Horario no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F61",
+				Data:    []interface{}{fiber.Map{"error": "Horario no encontrado"}},
+			},
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"horario": horario,
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S61",
+			Data:    []interface{}{fiber.Map{"horario": horario}},
+		},
 	})
 }
 
@@ -254,16 +347,24 @@ func ActualizarHorario(c *fiber.Ctx) error {
 	// Solo admin puede actualizar horarios
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores pueden actualizar horarios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores pueden actualizar horarios"}},
+			},
 		})
 	}
 
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -274,22 +375,38 @@ func ActualizarHorario(c *fiber.Ctx) error {
 		&horarioExistente.IDHorario, &horarioExistente.IDMedico, &horarioExistente.IDConsultorio)
 
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Horario no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Horario no encontrado"}},
+			},
 		})
 	}
 
+	// En el método ActualizarHorario, después del BodyParser
 	var horarioActualizado models.Horario
 	if err := c.BodyParser(&horarioActualizado); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Datos inválidos",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+			},
 		})
 	}
+
+	// ELIMINAR ESTA LÍNEA:
+	// horarioActualizado.FechaHora = time.Time{}
 
 	// Validaciones
 	if horarioActualizado.Turno == "" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "El turno es requerido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "El turno es requerido"}},
+			},
 		})
 	}
 
@@ -301,14 +418,22 @@ func ActualizarHorario(c *fiber.Ctx) error {
 			 JOIN Rol r ON u.id_rol = r.id_rol 
 			 WHERE u.id_usuario = $1`, horarioActualizado.IDMedico).Scan(&rolNombre)
 		if err != nil {
-			return c.Status(404).JSON(fiber.Map{
-				"error": "Médico no encontrado",
+			return c.Status(404).JSON(StandardResponse{
+				StatusCode: 404,
+				Body: BodyResponse{
+					IntCode: "F62",
+					Data:    []interface{}{fiber.Map{"error": "Médico no encontrado"}},
+				},
 			})
 		}
 
 		if rolNombre != "medico" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "El usuario especificado no es un médico",
+			return c.Status(400).JSON(StandardResponse{
+				StatusCode: 400,
+				Body: BodyResponse{
+					IntCode: "F62",
+					Data:    []interface{}{fiber.Map{"error": "El usuario especificado no es un médico"}},
+				},
 			})
 		}
 	} else {
@@ -321,8 +446,12 @@ func ActualizarHorario(c *fiber.Ctx) error {
 		err = database.GetDB().QueryRow(context.Background(),
 			"SELECT EXISTS(SELECT 1 FROM Consultorio WHERE id_consultorio = $1)", horarioActualizado.IDConsultorio).Scan(&consultorioExiste)
 		if err != nil || !consultorioExiste {
-			return c.Status(404).JSON(fiber.Map{
-				"error": "Consultorio no encontrado",
+			return c.Status(404).JSON(StandardResponse{
+				StatusCode: 404,
+				Body: BodyResponse{
+					IntCode: "F62",
+					Data:    []interface{}{fiber.Map{"error": "Consultorio no encontrado"}},
+				},
 			})
 		}
 	} else {
@@ -335,14 +464,22 @@ func ActualizarHorario(c *fiber.Ctx) error {
 		"SELECT EXISTS(SELECT 1 FROM Horario WHERE id_medico = $1 AND id_consultorio = $2 AND turno = $3 AND id_horario != $4)",
 		horarioActualizado.IDMedico, horarioActualizado.IDConsultorio, horarioActualizado.Turno, id).Scan(&existeOtroHorario)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar horario",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar horario"}},
+			},
 		})
 	}
 
 	if existeOtroHorario {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "Ya existe otro horario para este médico en este consultorio y turno",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Ya existe otro horario para este médico en este consultorio y turno"}},
+			},
 		})
 	}
 
@@ -355,13 +492,48 @@ func ActualizarHorario(c *fiber.Ctx) error {
 		horarioActualizado.ConsultaDisponible, id)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al actualizar el horario",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Error al actualizar el horario"}},
+			},
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"mensaje": "Horario actualizado exitosamente",
+	// Log evento de actualización de horario
+	// En la función ActualizarHorario, alrededor de la línea 500-510
+	// Obtener email del usuario para logging
+	userID := c.Locals("user_id").(int)
+	var userEmail string
+	err = database.GetDB().QueryRow(context.Background(),
+		"SELECT email FROM Usuario WHERE id_usuario = $1", userID).Scan(&userEmail)
+	if err != nil {
+		userEmail = "unknown" // Fallback si no se puede obtener el email
+	}
+
+	// Log de la acción
+	middleware.LogCustomEvent(
+		models.LogLevelInfo,
+		"Horario actualizado",
+		userEmail, // Usar la variable userEmail obtenida
+		userRole,
+		map[string]interface{}{
+			"horario_id":     id,
+			"medico_id":      horarioActualizado.IDMedico,
+			"consultorio_id": horarioActualizado.IDConsultorio,
+			"turno":          horarioActualizado.Turno,
+			"updated_by":     userEmail, // Usar la variable userEmail
+			"action":         "horario_updated",
+		},
+	)
+
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S62",
+			Data:    []interface{}{fiber.Map{"mensaje": "Horario actualizado exitosamente"}},
+		},
 	})
 }
 
@@ -370,16 +542,24 @@ func EliminarHorario(c *fiber.Ctx) error {
 	// Solo admin puede eliminar horarios
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores pueden eliminar horarios",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores pueden eliminar horarios"}},
+			},
 		})
 	}
 
 	idParam := c.Params("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "ID inválido",
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "ID inválido"}},
+			},
 		})
 	}
 
@@ -388,14 +568,37 @@ func EliminarHorario(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT EXISTS(SELECT 1 FROM Consulta WHERE id_horario = $1)", id).Scan(&tieneConsultas)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al verificar consultas asociadas",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Error al verificar consultas asociadas"}},
+			},
 		})
 	}
 
 	if tieneConsultas {
-		return c.Status(409).JSON(fiber.Map{
-			"error": "No se puede eliminar el horario porque tiene consultas asociadas",
+		return c.Status(409).JSON(StandardResponse{
+			StatusCode: 409,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "No se puede eliminar el horario porque tiene consultas asociadas"}},
+			},
+		})
+	}
+
+	// Obtener información del horario antes de eliminarlo
+	var medicoID, consultorioID int
+	var turno string
+	err = database.GetDB().QueryRow(context.Background(),
+		"SELECT id_medico, id_consultorio, turno FROM Horario WHERE id_horario = $1", id).Scan(&medicoID, &consultorioID, &turno)
+	if err != nil {
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Horario no encontrado"}},
+			},
 		})
 	}
 
@@ -403,19 +606,59 @@ func EliminarHorario(c *fiber.Ctx) error {
 	result, err := database.GetDB().Exec(context.Background(),
 		"DELETE FROM Horario WHERE id_horario = $1", id)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al eliminar el horario",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Error al eliminar el horario"}},
+			},
 		})
 	}
 
 	if result.RowsAffected() == 0 {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Horario no encontrado",
+		return c.Status(404).JSON(StandardResponse{
+			StatusCode: 404,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Horario no encontrado"}},
+			},
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"mensaje": "Horario eliminado exitosamente",
+	// En la función EliminarHorario, después de obtener la información del horario
+	// y antes del logging (alrededor de la línea 620)
+
+	// Obtener email del usuario para logging
+	userID := c.Locals("user_id").(int)
+	var userEmail string
+	err = database.GetDB().QueryRow(context.Background(),
+		"SELECT email FROM Usuario WHERE id_usuario = $1", userID).Scan(&userEmail)
+	if err != nil {
+		userEmail = "unknown" // Fallback si no se puede obtener el email
+	}
+
+	// Log evento de eliminación de horario
+	middleware.LogCustomEvent(
+		models.LogLevelWarning,
+		"Horario eliminado",
+		userEmail, // Usar la variable userEmail obtenida
+		userRole,
+		map[string]interface{}{
+			"horario_id":     id,
+			"medico_id":      medicoID,
+			"consultorio_id": consultorioID,
+			"turno":          turno,
+			"deleted_by":     userEmail, // Usar la variable userEmail
+			"action":         "horario_deleted",
+		},
+	)
+
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S62",
+			Data:    []interface{}{fiber.Map{"mensaje": "Horario eliminado exitosamente"}},
+		},
 	})
 }
 
@@ -424,8 +667,12 @@ func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 	// Admin y médicos pueden cambiar disponibilidad
 	userRole := c.Locals("user_role").(string)
 	if userRole != "admin" && userRole != "medico" {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "Solo administradores y médicos pueden cambiar la disponibilidad",
+		return c.Status(403).JSON(StandardResponse{
+			StatusCode: 403,
+			Body: BodyResponse{
+				IntCode: "F62",
+				Data:    []interface{}{fiber.Map{"error": "Solo administradores y médicos pueden cambiar la disponibilidad"}},
+			},
 		})
 	}
 
@@ -503,10 +750,20 @@ func CambiarDisponibilidadHorario(c *fiber.Ctx) error {
 // ObtenerHorariosDisponibles obtiene solo los horarios disponibles
 func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 	// Debug: Log que se está ejecutando la función
-	log.Println("DEBUG - Ejecutando ObtenerHorariosDisponibles")
+	log.Println("DEBUG - *** INICIO ObtenerHorariosDisponibles ***")
+	log.Printf("DEBUG - Method: %s, Path: %s", c.Method(), c.Path())
+	log.Printf("DEBUG - Headers: %v", c.GetReqHeaders())
+
+	// Verificar usuario y permisos
+	userID := c.Locals("user_id")
+	userRole := c.Locals("user_role")
+	log.Printf("DEBUG - UserID: %v, UserRole: %v", userID, userRole)
+
+	// Verificar si hay query parameters que puedan estar causando problemas
+	log.Printf("DEBUG - Query params: %s", c.Request().URI().QueryString())
 
 	// Obtener horarios disponibles para citas
-	query := `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible, h.fecha_hora,
+	query := `SELECT h.id_horario, h.turno, h.id_medico, h.id_consultorio, h.consulta_disponible,
 			  u.nombre as medico_nombre, c.nombre_numero as consultorio_nombre
 			  FROM Horario h
 			  JOIN Usuario u ON h.id_medico = u.id_usuario
@@ -519,12 +776,17 @@ func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 	rows, err := database.GetDB().Query(context.Background(), query)
 	if err != nil {
 		log.Println("DEBUG - Error en query:", err)
-		return c.Status(400).JSON(fiber.Map{
-			"error":   "Error al obtener horarios disponibles",
-			"details": err.Error(),
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F10",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener horarios disponibles", "details": err.Error()}},
+			},
 		})
 	}
 	defer rows.Close()
+
+	log.Println("DEBUG - Query ejecutada exitosamente, procesando resultados...")
 
 	type HorarioDetalle struct {
 		models.Horario
@@ -541,15 +803,21 @@ func ObtenerHorariosDisponibles(c *fiber.Ctx) error {
 			&horario.MedicoNombre, &horario.ConsultorioNombre,
 		)
 		if err != nil {
+			log.Printf("DEBUG - Error escaneando fila: %v", err)
 			continue
 		}
 		horarios = append(horarios, horario)
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    horarios,
-		"total":   len(horarios),
+	log.Printf("DEBUG - Horarios encontrados: %d", len(horarios))
+	log.Printf("DEBUG - Enviando respuesta exitosa")
+
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S10",
+			Data:    []interface{}{fiber.Map{"horarios": horarios, "total": len(horarios)}},
+		},
 	})
 }
 

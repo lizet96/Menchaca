@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -82,49 +83,96 @@ var IntCodeMessages = map[string]string{
 	"F61": "Error al obtener estadísticas",
 }
 
-type BodyResponse struct {
-	IntCode string      `json:"intCode"`
-	Data    interface{} `json:"data"`
-}
-
-type StandardResponse struct {
-	StatusCode int          `json:"statusCode"`
-	Body       BodyResponse `json:"body"`
-}
-
 // RegistrarUsuario crea un nuevo usuario en el sistema
 func RegistrarUsuario(c *fiber.Ctx) error {
+	log.Printf("🔍 RegistrarUsuario: Iniciando registro de usuario")
 	var usuario models.Usuario
 	var err error
 
 	if err = c.BodyParser(&usuario); err != nil {
+		// Log intento de registro con datos inválidos
+		middleware.LogCustomEvent(
+			models.LogLevelError,
+			"Intento de registro con datos inválidos",
+			"",
+			"",
+			map[string]interface{}{
+				"ip":     c.IP(),
+				"action": "register_failed_invalid_data",
+				"error":  err.Error(),
+			},
+		)
+		log.Printf("❌ RegistrarUsuario: Error parsing body: %v", err)
 		return c.Status(400).JSON(StandardResponse{
 			StatusCode: 400,
 			Body: BodyResponse{
 				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+				Data:    []interface{}{fiber.Map{"error": "Los datos enviados no son válidos. Verifique el formato de la información."}},
 			},
 		})
 	}
 
-	// Validar contraseña segura
+	// Validar campos requeridos con mensajes específicos
+	var missingFields []string
+	if strings.TrimSpace(usuario.Nombre) == "" {
+		missingFields = append(missingFields, "nombre")
+	}
+	if strings.TrimSpace(usuario.Apellido) == "" {
+		missingFields = append(missingFields, "apellido")
+	}
+	if strings.TrimSpace(usuario.Email) == "" {
+		missingFields = append(missingFields, "correo electrónico")
+	}
+	if strings.TrimSpace(usuario.Password) == "" {
+		missingFields = append(missingFields, "contraseña")
+	}
+	if strings.TrimSpace(usuario.FechaNacimiento) == "" {
+		missingFields = append(missingFields, "fecha de nacimiento")
+	}
+	if usuario.IDRol <= 0 {
+		missingFields = append(missingFields, "rol")
+	}
+
+	if len(missingFields) > 0 {
+		errorMsg := "Los siguientes campos son obligatorios: " + strings.Join(missingFields, ", ")
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F02",
+				Data:    []interface{}{fiber.Map{"error": errorMsg}},
+			},
+		})
+	}
+
+	// Validar formato de email
+	if !strings.Contains(usuario.Email, "@") || !strings.Contains(usuario.Email, ".") {
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F02",
+				Data:    []interface{}{fiber.Map{"error": "El formato del correo electrónico no es válido. Debe contener @ y un dominio válido."}},
+			},
+		})
+	}
+
+	// Validar contraseña segura con mensaje detallado
 	if err = middleware.ValidateStrongPassword(usuario.Password); err != nil {
 		return c.Status(400).JSON(StandardResponse{
 			StatusCode: 400,
 			Body: BodyResponse{
 				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": err.Error()}},
+				Data:    []interface{}{fiber.Map{"error": "Contraseña no válida: " + err.Error() + ". La contraseña debe tener al menos 12 caracteres, incluyendo mayúsculas, minúsculas, números y caracteres especiales (!@#$%^&*()_+-=[]{}|;:,.<>?)."}},
 			},
 		})
 	}
 
-	// Validar que el id_rol sea válido
-	if usuario.IDRol <= 0 {
+	// Validar formato de fecha
+	if _, err = time.Parse("2006-01-02", usuario.FechaNacimiento); err != nil {
 		return c.Status(400).JSON(StandardResponse{
 			StatusCode: 400,
 			Body: BodyResponse{
 				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "ID de rol es requerido"}},
+				Data:    []interface{}{fiber.Map{"error": "El formato de la fecha de nacimiento no es válido. Use el formato YYYY-MM-DD (ejemplo: 1990-12-25)."}},
 			},
 		})
 	}
@@ -139,40 +187,7 @@ func RegistrarUsuario(c *fiber.Ctx) error {
 			StatusCode: 400,
 			Body: BodyResponse{
 				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "Rol inválido"}},
-			},
-		})
-	}
-
-	// Validar campos requeridos
-	if usuario.Nombre == "" || usuario.Apellido == "" || usuario.Email == "" || usuario.Password == "" {
-		return c.Status(400).JSON(StandardResponse{
-			StatusCode: 400,
-			Body: BodyResponse{
-				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "Nombre, apellido, email y contraseña son requeridos"}},
-			},
-		})
-	}
-
-	// Validar fecha de nacimiento
-	if usuario.FechaNacimiento == "" {
-		return c.Status(400).JSON(StandardResponse{
-			StatusCode: 400,
-			Body: BodyResponse{
-				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "Fecha de nacimiento es requerida"}},
-			},
-		})
-	}
-
-	// Validar formato de fecha (opcional pero recomendado)
-	if _, err = time.Parse("2006-01-02", usuario.FechaNacimiento); err != nil {
-		return c.Status(400).JSON(StandardResponse{
-			StatusCode: 400,
-			Body: BodyResponse{
-				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "Formato de fecha inválido. Use YYYY-MM-DD"}},
+				Data:    []interface{}{fiber.Map{"error": "El rol seleccionado no es válido o no está disponible. Por favor, seleccione un rol válido."}},
 			},
 		})
 	}
@@ -182,20 +197,32 @@ func RegistrarUsuario(c *fiber.Ctx) error {
 	err = database.GetDB().QueryRow(context.Background(),
 		"SELECT COUNT(*) FROM Usuario WHERE email = $1", usuario.Email).Scan(&existeEmail)
 	if err != nil {
-		return c.Status(400).JSON(StandardResponse{
-			StatusCode: 400,
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
 			Body: BodyResponse{
-				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "Error al crear el usuario"}},
+				IntCode: "F01",
+				Data:    []interface{}{fiber.Map{"error": "Error interno del servidor al verificar el correo electrónico"}},
 			},
 		})
 	}
 	if existeEmail > 0 {
+		// Log intento de registro con email duplicado
+		middleware.LogCustomEvent(
+			models.LogLevelWarning,
+			"Intento de registro con email duplicado",
+			usuario.Email,
+			"",
+			map[string]interface{}{
+				"email":  usuario.Email,
+				"ip":     c.IP(),
+				"action": "register_failed_duplicate_email",
+			},
+		)
 		return c.Status(409).JSON(StandardResponse{
 			StatusCode: 409,
 			Body: BodyResponse{
 				IntCode: "F02",
-				Data:    []interface{}{fiber.Map{"error": "El email ya está registrado"}},
+				Data:    []interface{}{fiber.Map{"error": "El correo electrónico " + usuario.Email + " ya está registrado. Por favor, use un correo diferente o inicie sesión si ya tiene una cuenta."}},
 			},
 		})
 	}
@@ -243,6 +270,20 @@ func RegistrarUsuario(c *fiber.Ctx) error {
 		CreatedAt:       time.Now(),
 	}
 
+	// Log evento de registro exitoso
+	middleware.LogCustomEvent(
+		models.LogLevelSuccess,
+		"Usuario registrado exitosamente",
+		usuario.Email,
+		"",
+		map[string]interface{}{
+			"new_user_id": nuevoID,
+			"email":       usuario.Email,
+			"ip":          c.IP(),
+			"action":      "register_success",
+		},
+	)
+
 	return c.Status(201).JSON(StandardResponse{
 		StatusCode: 201,
 		Body: BodyResponse{
@@ -254,18 +295,43 @@ func RegistrarUsuario(c *fiber.Ctx) error {
 
 // Login autentica un usuario con MFA obligatorio
 func Login(c *fiber.Ctx) error {
+	log.Printf("🔍 Login: Iniciando proceso de autenticación")
 	var loginReq models.LoginMFARequest // Cambiar a LoginMFARequest
 	if err := c.BodyParser(&loginReq); err != nil {
+		log.Printf("❌ Login: Error parsing body: %v", err)
 		return c.Status(400).JSON(StandardResponse{
 			StatusCode: 400,
 			Body: BodyResponse{
 				IntCode: "F01",
-				Data:    []interface{}{fiber.Map{"error": "Datos inválidos"}},
+				Data:    []interface{}{fiber.Map{"error": "Los datos de inicio de sesión no son válidos. Verifique el formato de la información enviada."}},
+			},
+		})
+	}
+
+	// Validar campos requeridos
+	if strings.TrimSpace(loginReq.Email) == "" || strings.TrimSpace(loginReq.Password) == "" {
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F01",
+				Data:    []interface{}{fiber.Map{"error": "El correo electrónico y la contraseña son obligatorios para iniciar sesión."}},
+			},
+		})
+	}
+
+	// Validar formato básico de email
+	if !strings.Contains(loginReq.Email, "@") || !strings.Contains(loginReq.Email, ".") {
+		return c.Status(400).JSON(StandardResponse{
+			StatusCode: 400,
+			Body: BodyResponse{
+				IntCode: "F01",
+				Data:    []interface{}{fiber.Map{"error": "El formato del correo electrónico no es válido."}},
 			},
 		})
 	}
 
 	// Buscar usuario por email (SIN campo tipo)
+	log.Printf("🔍 Login: Buscando usuario con email: %s", loginReq.Email)
 	var usuario models.Usuario
 	var mfaSecret sql.NullString
 	var backupCodes sql.NullString
@@ -282,11 +348,24 @@ func Login(c *fiber.Ctx) error {
 		&usuario.CreatedAt, &rolNombre)
 
 	if err != nil {
+		// Log intento de login fallido - usuario no encontrado
+		middleware.LogCustomEvent(
+			models.LogLevelWarning,
+			"Intento de login con email inexistente",
+			loginReq.Email,
+			"",
+			map[string]interface{}{
+				"email":  loginReq.Email,
+				"ip":     c.IP(),
+				"action": "login_failed_user_not_found",
+			},
+		)
+		log.Printf("❌ Login: Usuario no encontrado para email: %s, error: %v", loginReq.Email, err)
 		return c.Status(401).JSON(StandardResponse{
 			StatusCode: 401,
 			Body: BodyResponse{
 				IntCode: "F01",
-				Data:    []interface{}{fiber.Map{"error": "Credenciales inválidas"}},
+				Data:    []interface{}{fiber.Map{"error": "No se encontró una cuenta con este correo electrónico. Verifique que el correo sea correcto o regístrese si no tiene una cuenta."}},
 			},
 		})
 	}
@@ -296,13 +375,28 @@ func Login(c *fiber.Ctx) error {
 	usuario.BackupCodes = backupCodes.String
 
 	// Verificar contraseña
+	log.Printf("🔍 Login: Verificando contraseña para usuario ID: %d", usuario.IDUsuario)
 	err = bcrypt.CompareHashAndPassword([]byte(usuario.Password), []byte(loginReq.Password))
 	if err != nil {
+		// Log intento de login fallido - contraseña incorrecta
+		middleware.LogCustomEvent(
+			models.LogLevelWarning,
+			"Intento de login con contraseña incorrecta",
+			usuario.Email,
+			"",
+			map[string]interface{}{
+				"user_id": usuario.IDUsuario,
+				"email":   usuario.Email,
+				"ip":      c.IP(),
+				"action":  "login_failed_wrong_password",
+			},
+		)
+		log.Printf("❌ Login: Contraseña incorrecta para usuario ID: %d", usuario.IDUsuario)
 		return c.Status(401).JSON(StandardResponse{
 			StatusCode: 401,
 			Body: BodyResponse{
 				IntCode: "F01",
-				Data:    []interface{}{fiber.Map{"error": "Credenciales inválidas"}},
+				Data:    []interface{}{fiber.Map{"error": "La contraseña ingresada es incorrecta. Por favor, verifique su contraseña e intente nuevamente."}},
 			},
 		})
 	}
@@ -443,8 +537,10 @@ func Login(c *fiber.Ctx) error {
 	}
 
 	// GENERAR TOKENS JWT (usando id_rol)
+	log.Printf("✅ Login: Autenticación exitosa para usuario ID: %d, generando tokens", usuario.IDUsuario)
 	accessToken, refreshToken, err := middleware.GenerateTokenPair(usuario.IDUsuario, usuario.IDRol)
 	if err != nil {
+		log.Printf("❌ Login: Error generando tokens para usuario ID: %d, error: %v", usuario.IDUsuario, err)
 		return c.Status(500).JSON(StandardResponse{
 			StatusCode: 500,
 			Body: BodyResponse{
@@ -469,7 +565,21 @@ func Login(c *fiber.Ctx) error {
 		})
 	}
 
+	// Log evento de login exitoso
+	middleware.LogCustomEvent(
+		models.LogLevelSuccess,
+		"Login exitoso",
+		usuario.Email,
+		rolNombre,
+		map[string]interface{}{
+			"user_id": usuario.IDUsuario,
+			"ip":      c.IP(),
+			"action":  "login_success",
+		},
+	)
+
 	// Respuesta exitosa con tokens
+	log.Printf("✅ Login: Login completado exitosamente para usuario ID: %d", usuario.IDUsuario)
 	return c.JSON(StandardResponse{
 		StatusCode: 200,
 		Body: BodyResponse{
@@ -501,8 +611,12 @@ func ObtenerUsuarios(c *fiber.Ctx) error {
 		 JOIN Rol r ON u.id_rol = r.id_rol 
 		 ORDER BY u.created_at DESC`)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error al obtener usuarios",
+		return c.Status(500).JSON(StandardResponse{
+			StatusCode: 500,
+			Body: BodyResponse{
+				IntCode: "F06",
+				Data:    []interface{}{fiber.Map{"error": "Error al obtener usuarios"}},
+			},
 		})
 	}
 	defer rows.Close()
@@ -519,9 +633,12 @@ func ObtenerUsuarios(c *fiber.Ctx) error {
 		usuarios = append(usuarios, usuario)
 	}
 
-	return c.JSON(fiber.Map{
-		"usuarios": usuarios,
-		"total":    len(usuarios),
+	return c.JSON(StandardResponse{
+		StatusCode: 200,
+		Body: BodyResponse{
+			IntCode: "S06",
+			Data:    []interface{}{fiber.Map{"usuarios": usuarios, "total": len(usuarios)}},
+		},
 	})
 }
 
@@ -559,8 +676,10 @@ func ObtenerUsuarioPorID(c *fiber.Ctx) error {
 
 // ActualizarUsuario actualiza los datos de un usuario
 func ActualizarUsuario(c *fiber.Ctx) error {
+	log.Printf("🔍 ActualizarUsuario: Iniciando actualización de usuario")
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
+		log.Printf("❌ ActualizarUsuario: ID inválido: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": "ID inválido",
 		})
@@ -621,6 +740,20 @@ func ActualizarUsuario(c *fiber.Ctx) error {
 		})
 	}
 
+	// Log evento de actualización de usuario
+	middleware.LogCustomEvent(
+		models.LogLevelInfo,
+		"Usuario actualizado",
+		usuario.Email,
+		"",
+		map[string]interface{}{
+			"updated_user_id": id,
+			"updated_email":   usuario.Email,
+			"updated_by":      c.Locals("user_email"),
+			"action":          "user_updated",
+		},
+	)
+
 	return c.JSON(fiber.Map{
 		"mensaje": "Usuario actualizado exitosamente",
 	})
@@ -628,8 +761,10 @@ func ActualizarUsuario(c *fiber.Ctx) error {
 
 // EliminarUsuario elimina un usuario (solo admin)
 func EliminarUsuario(c *fiber.Ctx) error {
+	log.Printf("🔍 EliminarUsuario: Iniciando eliminación de usuario")
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
+		log.Printf("❌ EliminarUsuario: ID inválido: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": "ID inválido",
 		})
@@ -645,6 +780,15 @@ func EliminarUsuario(c *fiber.Ctx) error {
 		})
 	}
 
+	// Obtener email del usuario antes de eliminarlo para el log
+	var emailUsuario string
+	err = database.GetDB().QueryRow(context.Background(), "SELECT email FROM usuarios WHERE id_usuario = $1", id).Scan(&emailUsuario)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{
+			"error": "Usuario no encontrado",
+		})
+	}
+
 	// Eliminar usuario
 	_, err = database.GetDB().Exec(context.Background(),
 		"DELETE FROM Usuario WHERE id_usuario = $1", id)
@@ -653,6 +797,20 @@ func EliminarUsuario(c *fiber.Ctx) error {
 			"error": "Error al eliminar usuario",
 		})
 	}
+
+	// Log evento de eliminación de usuario
+	middleware.LogCustomEvent(
+		models.LogLevelWarning,
+		"Usuario eliminado",
+		emailUsuario,
+		"",
+		map[string]interface{}{
+			"deleted_user_id": id,
+			"deleted_email":   emailUsuario,
+			"deleted_by":      c.Locals("user_email"),
+			"action":          "user_deleted",
+		},
+	)
 
 	return c.JSON(fiber.Map{
 		"mensaje": "Usuario eliminado exitosamente",
@@ -800,7 +958,7 @@ func LimpiarTodasLasSesiones(c *fiber.Ctx) error {
 	fmt.Printf("✅ Sesiones limpiadas: %d tokens revocados\n", rowsAffected)
 
 	return c.JSON(fiber.Map{
-		"mensaje": "Todas las sesiones han sido limpiadas exitosamente",
+		"mensaje":          "Todas las sesiones han sido limpiadas exitosamente",
 		"tokens_revocados": rowsAffected,
 	})
 }
@@ -1215,11 +1373,11 @@ func ObtenerPermisosPorRol(c *fiber.Ctx) error {
 
 // CrearUsuario crea un nuevo usuario
 func CrearUsuario(c *fiber.Ctx) error {
-	fmt.Printf("🔍 CrearUsuario: Iniciando creación de usuario\n")
+	log.Printf("🔍 CrearUsuario: Iniciando creación de usuario")
 
 	// Verificar permisos usando el nuevo sistema
 	if !hasPermission(c, "usuarios_create") {
-		fmt.Printf("❌ CrearUsuario: Sin permisos\n")
+		log.Printf("❌ CrearUsuario: Sin permisos")
 		return c.Status(403).JSON(fiber.Map{
 			"error": "No tienes permisos para crear usuarios",
 		})
@@ -1227,12 +1385,12 @@ func CrearUsuario(c *fiber.Ctx) error {
 
 	var usuario models.Usuario
 	if err := c.BodyParser(&usuario); err != nil {
-		fmt.Printf("❌ CrearUsuario: Error parsing body: %v\n", err)
+		log.Printf("❌ CrearUsuario: Error parsing body: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": "Datos inválidos",
 		})
 	}
-	fmt.Printf("✅ CrearUsuario: Body parsed successfully: %+v\n", usuario)
+	log.Printf("✅ CrearUsuario: Body parsed successfully: %+v", usuario)
 
 	// Validaciones
 	if usuario.Nombre == "" || usuario.Apellido == "" || usuario.Email == "" || usuario.Password == "" {
@@ -1259,14 +1417,14 @@ func CrearUsuario(c *fiber.Ctx) error {
 	}
 
 	// Validar contraseña segura
-	fmt.Printf("🔍 CrearUsuario: Validando contraseña\n")
+	log.Printf("🔍 CrearUsuario: Validando contraseña")
 	if err := middleware.ValidateStrongPassword(usuario.Password); err != nil {
-		fmt.Printf("❌ CrearUsuario: Error validando contraseña: %v\n", err)
+		log.Printf("❌ CrearUsuario: Error validando contraseña: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	fmt.Printf("✅ CrearUsuario: Contraseña válida\n")
+	log.Printf("✅ CrearUsuario: Contraseña válida")
 
 	// Verificar si el email ya existe
 	var existe int
@@ -1284,15 +1442,15 @@ func CrearUsuario(c *fiber.Ctx) error {
 	}
 
 	// Encriptar contraseña
-	fmt.Printf("🔍 CrearUsuario: Encriptando contraseña\n")
+	log.Printf("🔍 CrearUsuario: Encriptando contraseña")
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(usuario.Password), bcrypt.DefaultCost)
 	if err != nil {
-		fmt.Printf("❌ CrearUsuario: Error encriptando contraseña: %v\n", err)
+		log.Printf("❌ CrearUsuario: Error encriptando contraseña: %v", err)
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error al procesar contraseña",
 		})
 	}
-	fmt.Printf("✅ CrearUsuario: Contraseña encriptada\n")
+	log.Printf("✅ CrearUsuario: Contraseña encriptada")
 
 	// Insertar usuario sin el campo 'tipo'
 	query := `
@@ -1302,18 +1460,31 @@ func CrearUsuario(c *fiber.Ctx) error {
 	`
 
 	var nuevoID int
-	fmt.Printf("🔍 CrearUsuario: Ejecutando INSERT query\n")
+	log.Printf("🔍 CrearUsuario: Ejecutando INSERT query")
 	err = database.GetDB().QueryRow(context.Background(), query,
 		usuario.Nombre, usuario.Apellido, usuario.Email, string(hashedPassword),
 		usuario.FechaNacimiento, usuario.IDRol, time.Now()).Scan(&nuevoID)
 
 	if err != nil {
-		fmt.Printf("❌ CrearUsuario: Error en INSERT: %v\n", err)
+		log.Printf("❌ CrearUsuario: Error en INSERT: %v", err)
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error al crear usuario",
 		})
 	}
-	fmt.Printf("✅ CrearUsuario: Usuario creado con ID: %d\n", nuevoID)
+	// Log evento de creación de usuario
+	middleware.LogCustomEvent(
+		models.LogLevelSuccess,
+		"Usuario creado exitosamente",
+		usuario.Email,
+		"",
+		map[string]interface{}{
+			"new_user_id": nuevoID,
+			"new_email":   usuario.Email,
+			"created_by":  c.Locals("user_email"),
+			"action":      "user_created",
+		},
+	)
+	log.Printf("✅ CrearUsuario: Usuario creado con ID: %d", nuevoID)
 
 	return c.Status(201).JSON(fiber.Map{
 		"message": "Usuario creado exitosamente",
@@ -1393,5 +1564,39 @@ func ObtenerPacientes(c *fiber.Ctx) error {
 		"success": true,
 		"data":    pacientes,
 		"total":   len(pacientes),
+	})
+}
+
+// ObtenerRoles obtiene todos los roles disponibles
+func ObtenerRoles(c *fiber.Ctx) error {
+	rows, err := database.GetDB().Query(context.Background(),
+		`SELECT id_rol, nombre, descripcion FROM Rol ORDER BY nombre`)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Error al obtener roles",
+		})
+	}
+	defer rows.Close()
+
+	type Rol struct {
+		IDRol       int    `json:"id_rol"`
+		Nombre      string `json:"nombre"`
+		Descripcion string `json:"descripcion"`
+	}
+
+	var roles []Rol
+	for rows.Next() {
+		var rol Rol
+		err := rows.Scan(&rol.IDRol, &rol.Nombre, &rol.Descripcion)
+		if err != nil {
+			continue
+		}
+		roles = append(roles, rol)
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    roles,
+		"total":   len(roles),
 	})
 }

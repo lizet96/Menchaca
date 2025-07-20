@@ -14,6 +14,9 @@ func SetupRoutes(app *fiber.App) {
 	// Middleware global
 	app.Use(logger.New())
 	app.Use(recover.New())
+	app.Use(middleware.SecurityHeaders())    // Headers de seguridad
+	app.Use(middleware.DefaultRateLimiter()) // Rate limiting general
+	app.Use(middleware.LoggingMiddleware())  // Logging de auditoría
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
@@ -34,9 +37,11 @@ func SetupRoutes(app *fiber.App) {
 
 	// === RUTAS PÚBLICAS (Sin autenticación) ===
 	auth := api.Group("/auth")
-	auth.Post("/register", handlers.RegistrarUsuario)
-	auth.Post("/login", handlers.Login) // ← Cambiar de LoginWithMFA a Login
-	auth.Post("/refresh", handlers.RefreshToken)
+	// Aplicar rate limiting estricto para autenticación
+	auth.Use(middleware.AuthRateLimiter())
+	auth.Post("/register", middleware.BodySizeLimit(1024*1024), handlers.RegistrarUsuario) // 1MB límite
+	auth.Post("/login", middleware.BodySizeLimit(512*1024), handlers.Login)                // 512KB límite
+	auth.Post("/refresh", middleware.BodySizeLimit(256*1024), handlers.RefreshToken)       // 256KB límite
 	auth.Post("/logout", middleware.JWTMiddlewareOptional(), handlers.Logout)
 
 	// === RUTAS PROTEGIDAS (Requieren autenticación) ===
@@ -54,6 +59,8 @@ func SetupRoutes(app *fiber.App) {
 
 	// --- RUTAS ADMINISTRATIVAS ---
 	admin := protected.Group("/admin")
+	// Aplicar rate limiting estricto para operaciones administrativas
+	admin.Use(middleware.StrictRateLimiter())
 	admin.Post("/limpiar-sesiones", middleware.RequirePermission("usuarios_delete"), handlers.LimpiarTodasLasSesiones)
 
 	// --- RUTAS DE PACIENTES ---
@@ -62,13 +69,16 @@ func SetupRoutes(app *fiber.App) {
 
 	// --- RUTAS DE ROLES Y PERMISOS ---
 	roles := protected.Group("/roles")
+	roles.Get("/", handlers.ObtenerRoles)
 	roles.Get("/:id/permisos", handlers.ObtenerPermisosPorRol)
 
 	// --- RUTAS MFA ---
 	mfa := protected.Group("/mfa")
-	mfa.Post("/setup", handlers.SetupMFA)
-	mfa.Post("/verify", handlers.VerifyMFA)
-	mfa.Post("/disable", handlers.DisableMFA)
+	// Aplicar rate limiting estricto para MFA
+	mfa.Use(middleware.StrictRateLimiter())
+	mfa.Post("/setup", middleware.BodySizeLimit(256*1024), handlers.SetupMFA)     // 256KB límite
+	mfa.Post("/verify", middleware.BodySizeLimit(128*1024), handlers.VerifyMFA)   // 128KB límite
+	mfa.Post("/disable", middleware.BodySizeLimit(128*1024), handlers.DisableMFA) // 128KB límite
 
 	// --- RUTAS DE EXPEDIENTES ---
 	expedientes := protected.Group("/expedientes")
@@ -85,7 +95,8 @@ func SetupRoutes(app *fiber.App) {
 	consultas.Get("/", middleware.RequirePermission("consultas_read"), handlers.ObtenerConsultas)
 	consultas.Get("/:id", middleware.RequirePermission("consultas_read"), handlers.ObtenerConsultaPorID)
 	consultas.Put("/:id", middleware.RequirePermission("consultas_update"), handlers.ActualizarConsulta)
-	consultas.Delete("/:id", middleware.RequirePermission("consultas_delete"), handlers.CancelarConsulta)
+	consultas.Delete("/:id", middleware.RequirePermission("consultas_delete"), handlers.EliminarConsulta)
+	consultas.Put("/:id/cancelar", middleware.RequirePermission("consultas_update"), handlers.CancelarConsulta)
 	consultas.Get("/paciente/:paciente_id", middleware.RequirePermission("consultas_read"), handlers.ObtenerConsultasPorPaciente)
 	consultas.Get("/medico/:medico_id", middleware.RequirePermission("consultas_read"), handlers.ObtenerConsultasPorMedico)
 	consultas.Put("/:id/completar", middleware.RequirePermission("consultas_update"), handlers.CompletarConsulta)
@@ -117,10 +128,19 @@ func SetupRoutes(app *fiber.App) {
 	horarios := protected.Group("/horarios")
 	horarios.Post("/", middleware.RequirePermission("horarios_create"), handlers.CrearHorario)
 	horarios.Get("/", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorarios)
+	// Rutas específicas ANTES de las rutas con parámetros
+	horarios.Get("/disponibles", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorariosDisponibles)
+	horarios.Get("/medico/:medico_id", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorariosPorMedico)
+	// Rutas con parámetros ID al final
 	horarios.Get("/:id", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorarioPorID)
 	horarios.Put("/:id", middleware.RequirePermission("horarios_update"), handlers.ActualizarHorario)
 	horarios.Delete("/:id", middleware.RequirePermission("horarios_delete"), handlers.EliminarHorario)
-	horarios.Get("/medico/:medico_id", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorariosPorMedico)
 	horarios.Put("/:id/disponibilidad", middleware.RequirePermission("horarios_update"), handlers.CambiarDisponibilidadHorario)
-	horarios.Get("/disponibles", middleware.RequirePermission("horarios_read"), handlers.ObtenerHorariosDisponibles)
+
+	// --- RUTAS DE LOGS (Solo para administradores) ---
+	logs := protected.Group("/logs")
+	logs.Use(middleware.StrictRateLimiter()) // Rate limiting estricto para logs
+	logs.Get("/", middleware.RequirePermission("logs_read"), handlers.ObtenerLogs)
+	logs.Get("/estadisticas", middleware.RequirePermission("logs_read"), handlers.ObtenerEstadisticasLogs)
+	logs.Delete("/limpiar", middleware.RequirePermission("logs_delete"), handlers.LimpiarLogs)
 }
